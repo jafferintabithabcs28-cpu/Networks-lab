@@ -1,0 +1,51 @@
+bool hasMatch(char* s, char* p) {
+    int s_len = strlen(s);
+    int p_len = strlen(p);
+    int star_idx = 0;
+    while (p[star_idx] != '*') {
+        star_idx++;
+    }
+    int prefix_len = star_idx;
+    int first_prefix_idx = -1;
+
+    for (int i = 0; i <= s_len - prefix_len; i++) {
+        bool match = true;
+        for (int j = 0; j < prefix_len; j++) {
+            if (s[i + j] != p[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            first_prefix_idx = i;
+            break; 
+        }
+    }
+
+    if (first_prefix_idx == -1) {
+        return false;
+    }
+
+    int suffix_start_in_p = star_idx + 1;
+    int suffix_len = p_len - suffix_start_in_p;
+    int search_start_in_s = first_prefix_idx + prefix_len;
+    bool suffix_found = false;
+
+    for (int i = search_start_in_s; i <= s_len - suffix_len; i++) {
+        bool match = true;
+        for (int j = 0; j < suffix_len; j++) {
+            if (s[i + j] != p[suffix_start_in_p + j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            suffix_found = true;
+            break;
+        }
+    }
+
+    return suffix_found;
+}
+
+    
