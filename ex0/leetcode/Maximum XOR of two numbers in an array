@@ -1,0 +1,57 @@
+#include <stdio.h>
+#include <stdlib.h>
+#define MAX_NODES 6200005
+typedef struct {
+    int children[2];
+} TrieNode;
+TrieNode nodePool[MAX_NODES];
+int nodeCount = 0;
+int createNode() {
+    nodePool[nodeCount].children[0] = -1;
+    nodePool[nodeCount].children[1] = -1;
+    return nodeCount++;
+}
+void insert(int root, int num) {
+    int curr = root;
+    for (int i = 30; i >= 0; i--) {
+        int bit = (num >> i) & 1;
+        if (nodePool[curr].children[bit] == -1) {
+            nodePool[curr].children[bit] = createNode();
+        }
+        curr = nodePool[curr].children[bit];
+    }
+}
+int getMaxXOR(int root, int num) {
+    int curr = root;
+    int max_xor = 0;
+    for (int i = 30; i >= 0; i--) {
+        int bit = (num >> i) & 1;
+        int toggled_bit = 1 - bit;
+        
+        if (nodePool[curr].children[toggled_bit] != -1) {
+            max_xor |= (1 << i);
+            curr = nodePool[curr].children[toggled_bit];
+        } else {
+            curr = nodePool[curr].children[bit];
+        }
+    }
+    return max_xor;
+}
+int findMaximumXOR(int* nums, int numsSize) {
+    if (numsSize <= 1) return 0;
+     nodeCount = 0;
+    int root = createNode();
+    
+    insert(root, nums[0]);
+    int global_max = 0;
+    
+    for (int i = 1; i < numsSize; i++) {
+        int current_max = getMaxXOR(root, nums[i]);
+        if (current_max > global_max) {
+            global_max = current_max;
+        }
+        insert(root, nums[i]);
+    }
+    
+    return global_max;
+}
