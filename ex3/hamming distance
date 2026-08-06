@@ -1,0 +1,5 @@
+int hammingDistance(int x, int y) {
+    int xor_result = x ^ y;
+    return __builtin_popcount(xor_result);
+    
+}
