@@ -1,0 +1,91 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_STOPS 1000000
+typedef struct Node {
+    int bus_id;
+    struct Node* next;
+} Node;
+typedef struct {
+    int stop;
+    int depth;
+} QueueNode;
+
+int numBusesToDestination(int** routes, int routesSize, int* routesColSize, int source, int target) {
+    if (source == target) return 0;
+    Node** stopToBuses = (Node**)calloc(MAX_STOPS, sizeof(Node*));
+    for (int i = 0; i < routesSize; i++) {
+        for (int j = 0; j < routesColSize[i]; j++) {
+            int stop = routes[i][j];
+            Node* newNode = (Node*)malloc(sizeof(Node));
+            newNode->bus_id = i;
+            newNode->next = stopToBuses[stop];
+            stopToBuses[stop] = newNode;
+        }
+    }
+    int* visitedBuses = (int*)calloc(routesSize, sizeof(int));
+
+    char* visitedStops = (char*)calloc(MAX_STOPS, sizeof(char));
+    int maxQueueSize = 0;
+    for (int i = 0; i < routesSize; i++) maxQueueSize += routesColSize[i];
+    if (maxQueueSize < 2) maxQueueSize = 2; 
+
+    QueueNode* queue = (QueueNode*)malloc(maxQueueSize * sizeof(QueueNode));
+    int head = 0, tail = 0;
+
+ 
+    queue[tail++] = (QueueNode){source, 0};
+    visitedStops[source] = 1;
+
+    int minBuses = -1;
+
+   
+    while (head < tail) {
+        QueueNode curr = queue[head++];
+        int currStop = curr.stop;
+        int currDepth = curr.depth;
+
+        if (currStop == target) {
+            minBuses = currDepth;
+            break;
+        }
+
+       
+        Node* busNode = stopToBuses[currStop];
+        while (busNode != NULL) {
+            int busId = busNode->bus_id;
+
+           
+            if (!visitedBuses[busId]) {
+                visitedBuses[busId] = 1;
+
+                
+                for (int i = 0; i < routesColSize[busId]; i++) {
+                    int nextStop = routes[busId][i];
+
+                    if (!visitedStops[nextStop]) {
+                        visitedStops[nextStop] = 1;
+                        queue[tail++] = (QueueNode){nextStop, currDepth + 1};
+                    }
+                }
+            }
+            busNode = busNode->next;
+        }
+    }
+
+    for (int i = 0; i < MAX_STOPS; i++) {
+        Node* curr = stopToBuses[i];
+        while (curr != NULL) {
+            Node* temp = curr;
+            curr = curr->next;
+            free(temp);
+        }
+    }
+    free(stopToBuses);
+    free(visitedBuses);
+    free(visitedStops);
+    free(queue);
+
+    return minBuses;
+}
