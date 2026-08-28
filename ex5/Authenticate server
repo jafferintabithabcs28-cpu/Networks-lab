@@ -1,0 +1,322 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <time.h>
+#include <sys/utsname.h>
+
+#define BUFFER_SIZE 1024
+
+void write_log(const char *message)
+{
+    FILE *fp;
+    time_t now;
+
+    fp = fopen("server_log.txt", "a");
+
+    if (fp != NULL)
+    {
+        now = time(NULL);
+
+        fprintf(fp, "[%s] %s\n", ctime(&now), message);
+
+        fclose(fp);
+    }
+}
+
+void upload_file(int client_socket)
+{
+    char filename[100];
+    char buffer[BUFFER_SIZE];
+    FILE *fp;
+    int n;
+
+    recv(client_socket, filename, sizeof(filename), 0);
+
+    fp = fopen(filename, "w");
+
+    if (fp == NULL)
+    {
+        strcpy(buffer, "ERROR");
+        send(client_socket, buffer, strlen(buffer) + 1, 0);
+        return;
+    }
+
+    strcpy(buffer, "READY");
+    send(client_socket, buffer, strlen(buffer) + 1, 0);
+
+    while (1)
+    {
+        n = recv(client_socket, buffer, sizeof(buffer), 0);
+
+        if (n <= 0)
+            break;
+
+        if (n == 4 && strncmp(buffer, "EOF", 3) == 0)
+            break;
+
+        fwrite(buffer, 1, n, fp);
+    }
+
+    fclose(fp);
+
+    printf("File uploaded: %s\n", filename);
+
+    write_log("File uploaded successfully");
+
+    strcpy(buffer, "UPLOAD_SUCCESS");
+
+    send(client_socket,
+         buffer,
+         strlen(buffer) + 1,
+         0);
+}
+
+void download_file(int client_socket)
+{
+    char filename[100];
+    char buffer[BUFFER_SIZE];
+    FILE *fp;
+    int n;
+
+    recv(client_socket, filename, sizeof(filename), 0);
+
+    fp = fopen(filename, "r");
+
+    if (fp == NULL)
+    {
+        strcpy(buffer, "FILE_NOT_FOUND");
+
+        send(client_socket,
+             buffer,
+             strlen(buffer) + 1,
+             0);
+
+        return;
+    }
+
+    strcpy(buffer, "FILE_FOUND");
+
+    send(client_socket,
+         buffer,
+         strlen(buffer) + 1,
+         0);
+
+    while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0)
+    {
+        send(client_socket, buffer, n, 0);
+    }
+
+    send(client_socket, "EOF", 4, 0);
+
+    fclose(fp);
+
+    printf("File downloaded: %s\n", filename);
+
+    write_log("File downloaded successfully");
+}
+
+int main(int argc, char *argv[])
+{
+    int server_socket, client_socket;
+    int port;
+
+    struct sockaddr_in server_addr;
+    struct sockaddr_in client_addr;
+
+    socklen_t client_len;
+
+    char username[50];
+    char password[50];
+    char buffer[BUFFER_SIZE];
+    char client_ip[INET_ADDRSTRLEN];
+
+    if (argc != 2)
+    {
+        printf("Usage: %s <port>\n", argv[0]);
+        return 1;
+    }
+
+    port = atoi(argv[1]);
+
+    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (server_socket < 0)
+    {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(port);
+
+    if (bind(server_socket,
+             (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0)
+    {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(server_socket, 5) < 0)
+    {
+        perror("listen failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Multi-Service Server running on port %d\n", port);
+
+    client_len = sizeof(client_addr);
+
+    client_socket = accept(server_socket,
+                           (struct sockaddr *)&client_addr,
+                           &client_len);
+
+    if (client_socket < 0)
+    {
+        perror("accept failed");
+        exit(EXIT_FAILURE);
+    }
+
+    inet_ntop(AF_INET,
+              &client_addr.sin_addr,
+              client_ip,
+              sizeof(client_ip));
+
+    printf("Client Connected\n");
+    printf("Client IP Address: %s\n", client_ip);
+    printf("Client Port Number: %d\n",
+           ntohs(client_addr.sin_port));
+
+    recv(client_socket, username, sizeof(username), 0);
+    recv(client_socket, password, sizeof(password), 0);
+
+    if (strcmp(username, "admin") == 0 &&
+        strcmp(password, "1234") == 0)
+    {
+        strcpy(buffer, "AUTH_SUCCESS");
+
+        send(client_socket,
+             buffer,
+             strlen(buffer) + 1,
+             0);
+
+        write_log("Client authentication successful");
+    }
+    else
+    {
+        strcpy(buffer, "AUTH_FAILED");
+
+        send(client_socket,
+             buffer,
+             strlen(buffer) + 1,
+             0);
+
+        write_log("Invalid login attempt");
+
+        close(client_socket);
+        close(server_socket);
+
+        return 0;
+    }
+
+    while (1)
+    {
+        memset(buffer, 0, sizeof(buffer));
+
+        if (recv(client_socket,
+                 buffer,
+                 sizeof(buffer) - 1,
+                 0) <= 0)
+        {
+            break;
+        }
+
+        if (strcmp(buffer, "1") == 0)
+        {
+            write_log("Upload request received");
+
+            upload_file(client_socket);
+        }
+
+        else if (strcmp(buffer, "2") == 0)
+        {
+            write_log("Download request received");
+
+            download_file(client_socket);
+        }
+
+        else if (strcmp(buffer, "3") == 0)
+        {
+            time_t now = time(NULL);
+
+            strcpy(buffer, ctime(&now));
+
+            send(client_socket,
+                 buffer,
+                 strlen(buffer) + 1,
+                 0);
+
+            write_log("Server date and time requested");
+        }
+
+        else if (strcmp(buffer, "4") == 0)
+        {
+            struct utsname info;
+
+            uname(&info);
+
+            sprintf(buffer,
+                    "System Name: %s\n"
+                    "Node Name: %s\n"
+                    "Release: %s\n"
+                    "Version: %s\n"
+                    "Machine: %s\n",
+                    info.sysname,
+                    info.nodename,
+                    info.release,
+                    info.version,
+                    info.machine);
+
+            send(client_socket,
+                 buffer,
+                 strlen(buffer) + 1,
+                 0);
+
+            write_log("System information requested");
+        }
+
+        else if (strcmp(buffer, "5") == 0)
+        {
+            strcpy(buffer, "SESSION_TERMINATED");
+
+            send(client_socket,
+                 buffer,
+                 strlen(buffer) + 1,
+                 0);
+
+            write_log("Client session terminated");
+
+            break;
+        }
+
+        else
+        {
+            strcpy(buffer, "ERROR: Invalid request");
+
+            send(client_socket,
+                 buffer,
+                 strlen(buffer) + 1,
+                 0);
+
+            write_log("Invalid request received");
+        }
+    }
+
+    close(client_socket);
+    close(server_socket);
+
+    return 0;
+}
