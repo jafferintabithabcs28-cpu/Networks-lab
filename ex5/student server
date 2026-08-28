@@ -1,0 +1,532 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <time.h>
+
+#define BUFFER_SIZE 2048
+
+struct Student
+{
+    char regno[20];
+    char name[50];
+    char department[30];
+    int semester;
+    char subject[50];
+    int marks;
+    char grade[10];
+    float cgpa;
+};
+
+void write_log(char message[])
+{
+    FILE *fp;
+    time_t now;
+
+    fp = fopen("student_log.txt", "a");
+
+    if (fp != NULL)
+    {
+        now = time(NULL);
+
+        fprintf(fp, "[%s] %s\n",
+                ctime(&now), message);
+
+        fclose(fp);
+    }
+}
+
+int search_student(char regno[], struct Student *result)
+{
+    FILE *fp;
+    struct Student s;
+
+    fp = fopen("students.dat", "rb");
+
+    if (fp == NULL)
+        return 0;
+
+    while (fread(&s,
+                 sizeof(struct Student),
+                 1,
+                 fp) == 1)
+    {
+        if (strcmp(s.regno, regno) == 0)
+        {
+            *result = s;
+            fclose(fp);
+            return 1;
+        }
+    }
+
+    fclose(fp);
+
+    return 0;
+}
+
+void add_student(struct Student s)
+{
+    FILE *fp;
+
+    fp = fopen("students.dat", "ab");
+
+    fwrite(&s,
+           sizeof(struct Student),
+           1,
+           fp);
+
+    fclose(fp);
+}
+
+int delete_student(char regno[])
+{
+    FILE *fp, *temp;
+    struct Student s;
+    int found = 0;
+
+    fp = fopen("students.dat", "rb");
+
+    if (fp == NULL)
+        return 0;
+
+    temp = fopen("temp.dat", "wb");
+
+    while (fread(&s,
+                 sizeof(struct Student),
+                 1,
+                 fp) == 1)
+    {
+        if (strcmp(s.regno, regno) == 0)
+        {
+            found = 1;
+        }
+        else
+        {
+            fwrite(&s,
+                   sizeof(struct Student),
+                   1,
+                   temp);
+        }
+    }
+
+    fclose(fp);
+    fclose(temp);
+
+    remove("students.dat");
+    rename("temp.dat", "students.dat");
+
+    return found;
+}
+
+int update_student(struct Student updated)
+{
+    FILE *fp, *temp;
+    struct Student s;
+    int found = 0;
+
+    fp = fopen("students.dat", "rb");
+
+    if (fp == NULL)
+        return 0;
+
+    temp = fopen("temp.dat", "wb");
+
+    while (fread(&s,
+                 sizeof(struct Student),
+                 1,
+                 fp) == 1)
+    {
+        if (strcmp(s.regno, updated.regno) == 0)
+        {
+            fwrite(&updated,
+                   sizeof(struct Student),
+                   1,
+                   temp);
+
+            found = 1;
+        }
+        else
+        {
+            fwrite(&s,
+                   sizeof(struct Student),
+                   1,
+                   temp);
+        }
+    }
+
+    fclose(fp);
+    fclose(temp);
+
+    remove("students.dat");
+    rename("temp.dat", "students.dat");
+
+    return found;
+}
+
+void display_students(char buffer[])
+{
+    FILE *fp;
+    struct Student s;
+
+    strcpy(buffer, "STUDENT RECORDS\n\n");
+
+    fp = fopen("students.dat", "rb");
+
+    if (fp == NULL)
+    {
+        strcat(buffer, "No student records found\n");
+        return;
+    }
+
+    while (fread(&s,
+                 sizeof(struct Student),
+                 1,
+                 fp) == 1)
+    {
+        char temp[500];
+
+        sprintf(temp,
+                "Register Number: %s\n"
+                "Name: %s\n"
+                "Department: %s\n"
+                "Semester: %d\n"
+                "Subject: %s\n"
+                "Marks: %d\n"
+                "Grade: %s\n"
+                "CGPA: %.2f\n\n",
+                s.regno,
+                s.name,
+                s.department,
+                s.semester,
+                s.subject,
+                s.marks,
+                s.grade,
+                s.cgpa);
+
+        strcat(buffer, temp);
+    }
+
+    fclose(fp);
+}
+
+int get_topper(struct Student *topper)
+{
+    FILE *fp;
+    struct Student s;
+    int found = 0;
+
+    fp = fopen("students.dat", "rb");
+
+    if (fp == NULL)
+        return 0;
+
+    while (fread(&s,
+                 sizeof(struct Student),
+                 1,
+                 fp) == 1)
+    {
+        if (!found || s.cgpa > topper->cgpa)
+        {
+            *topper = s;
+            found = 1;
+        }
+    }
+
+    fclose(fp);
+
+    return found;
+}
+
+int main(int argc, char *argv[])
+{
+    int server_socket, client_socket;
+    int port;
+
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len;
+
+    char choice[20];
+    char buffer[BUFFER_SIZE];
+
+    if (argc != 2)
+    {
+        printf("Usage: %s <port>\n", argv[0]);
+        return 1;
+    }
+
+    port = atoi(argv[1]);
+
+    server_socket = socket(AF_INET,
+                           SOCK_STREAM,
+                           0);
+
+    if (server_socket < 0)
+    {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(port);
+
+    if (bind(server_socket,
+             (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0)
+    {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    listen(server_socket, 5);
+
+    printf("Student Result Server running on port %d\n",
+           port);
+
+    while (1)
+    {
+        client_len = sizeof(client_addr);
+
+        client_socket = accept(server_socket,
+                               (struct sockaddr *)&client_addr,
+                               &client_len);
+
+        if (client_socket < 0)
+            continue;
+
+        printf("Client connected\n");
+
+        while (1)
+        {
+            memset(choice, 0, sizeof(choice));
+
+            if (recv(client_socket,
+                     choice,
+                     sizeof(choice) - 1,
+                     0) <= 0)
+                break;
+
+            /* SEARCH */
+
+            if (strcmp(choice, "1") == 0)
+            {
+                struct Student s;
+                char regno[20];
+
+                recv(client_socket,
+                     regno,
+                     sizeof(regno),
+                     0);
+
+                if (search_student(regno, &s))
+                {
+                    sprintf(buffer,
+                            "Register Number: %s\n"
+                            "Name: %s\n"
+                            "Department: %s\n"
+                            "Semester: %d\n"
+                            "Subject: %s\n"
+                            "Marks: %d\n"
+                            "Grade: %s\n"
+                            "CGPA: %.2f\n",
+                            s.regno,
+                            s.name,
+                            s.department,
+                            s.semester,
+                            s.subject,
+                            s.marks,
+                            s.grade,
+                            s.cgpa);
+                }
+                else
+                {
+                    strcpy(buffer,
+                           "ERROR: Student not found");
+                }
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Student search operation");
+            }
+
+            /* ADD */
+
+            else if (strcmp(choice, "2") == 0)
+            {
+                struct Student s;
+                struct Student temp;
+
+                recv(client_socket,
+                     &s,
+                     sizeof(s),
+                     0);
+
+                if (search_student(s.regno, &temp))
+                {
+                    strcpy(buffer,
+                           "ERROR: Register number already exists");
+                }
+                else
+                {
+                    add_student(s);
+
+                    strcpy(buffer,
+                           "Student added successfully");
+                }
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Student add operation");
+            }
+
+            /* UPDATE */
+
+            else if (strcmp(choice, "3") == 0)
+            {
+                struct Student s;
+
+                recv(client_socket,
+                     &s,
+                     sizeof(s),
+                     0);
+
+                if (update_student(s))
+                {
+                    strcpy(buffer,
+                           "Student updated successfully");
+                }
+                else
+                {
+                    strcpy(buffer,
+                           "ERROR: Student not found");
+                }
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Student update operation");
+            }
+
+            /* DELETE */
+
+            else if (strcmp(choice, "4") == 0)
+            {
+                char regno[20];
+
+                recv(client_socket,
+                     regno,
+                     sizeof(regno),
+                     0);
+
+                if (delete_student(regno))
+                {
+                    strcpy(buffer,
+                           "Student deleted successfully");
+                }
+                else
+                {
+                    strcpy(buffer,
+                           "ERROR: Student not found");
+                }
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Student delete operation");
+            }
+
+            /* DISPLAY */
+
+            else if (strcmp(choice, "5") == 0)
+            {
+                memset(buffer, 0, sizeof(buffer));
+
+                display_students(buffer);
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Display all students operation");
+            }
+
+            /* CLASS TOPPER */
+
+            else if (strcmp(choice, "6") == 0)
+            {
+                struct Student topper;
+
+                if (get_topper(&topper))
+                {
+                    sprintf(buffer,
+                            "CLASS TOPPER\n"
+                            "Name: %s\n"
+                            "Register Number: %s\n"
+                            "CGPA: %.2f\n",
+                            topper.name,
+                            topper.regno,
+                            topper.cgpa);
+                }
+                else
+                {
+                    strcpy(buffer,
+                           "ERROR: No student records available");
+                }
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Class topper requested");
+            }
+
+            /* EXIT */
+
+            else if (strcmp(choice, "7") == 0)
+            {
+                strcpy(buffer, "Connection terminated");
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Client disconnected");
+
+                break;
+            }
+
+            else
+            {
+                strcpy(buffer,
+                       "ERROR: Invalid operation");
+
+                send(client_socket,
+                     buffer,
+                     strlen(buffer) + 1,
+                     0);
+
+                write_log("Invalid operation received");
+            }
+        }
+
+        close(client_socket);
+    }
+
+    close(server_socket);
+
+    return 0;
+}
