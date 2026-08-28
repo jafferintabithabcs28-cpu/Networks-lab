@@ -1,0 +1,165 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define BUFFER_SIZE 2048
+
+struct Student
+{
+    char regno[20];
+    char name[50];
+    char department[30];
+    int semester;
+    char subject[50];
+    int marks;
+    char grade[10];
+    float cgpa;
+};
+
+void get_student_details(struct Student *s)
+{
+    printf("Register Number: ");
+    scanf("%s", s->regno);
+
+    printf("Name: ");
+    scanf(" %[^\n]", s->name);
+
+    printf("Department: ");
+    scanf("%s", s->department);
+
+    printf("Semester: ");
+    scanf("%d", &s->semester);
+
+    printf("Subject: ");
+    scanf(" %[^\n]", s->subject);
+
+    printf("Marks: ");
+    scanf("%d", &s->marks);
+
+    printf("Grade: ");
+    scanf("%s", s->grade);
+
+    printf("CGPA: ");
+    scanf("%f", &s->cgpa);
+}
+
+int main(int argc, char *argv[])
+{
+    int client_socket;
+    int port;
+
+    struct sockaddr_in server_addr;
+
+    char choice[20];
+    char buffer[BUFFER_SIZE];
+
+    if (argc != 3)
+    {
+        printf("Usage: %s <server_ip> <port>\n", argv[0]);
+        return 1;
+    }
+
+    port = atoi(argv[2]);
+
+    client_socket = socket(AF_INET,
+                           SOCK_STREAM,
+                           0);
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET,
+                  argv[1],
+                  &server_addr.sin_addr) <= 0)
+    {
+        printf("Invalid IP address\n");
+        return 1;
+    }
+
+    if (connect(client_socket,
+                (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0)
+    {
+        perror("Connection failed");
+        return 1;
+    }
+
+    printf("Connected to Student Result Server\n");
+
+    while (1)
+    {
+        printf("\n----- STUDENT RESULT MANAGEMENT -----\n");
+        printf("1. Search Student\n");
+        printf("2. Add Student\n");
+        printf("3. Update Student\n");
+        printf("4. Delete Student\n");
+        printf("5. Display All Students\n");
+        printf("6. Display Class Topper\n");
+        printf("7. Exit\n");
+
+        printf("Enter choice: ");
+        scanf("%s", choice);
+
+        send(client_socket,
+             choice,
+             strlen(choice) + 1,
+             0);
+
+        if (strcmp(choice, "1") == 0)
+        {
+            char regno[20];
+
+            printf("Enter Register Number: ");
+            scanf("%s", regno);
+
+            send(client_socket,
+                 regno,
+                 strlen(regno) + 1,
+                 0);
+        }
+
+        else if (strcmp(choice, "2") == 0 ||
+                 strcmp(choice, "3") == 0)
+        {
+            struct Student s;
+
+            get_student_details(&s);
+
+            send(client_socket,
+                 &s,
+                 sizeof(s),
+                 0);
+        }
+
+        else if (strcmp(choice, "4") == 0)
+        {
+            char regno[20];
+
+            printf("Enter Register Number: ");
+            scanf("%s", regno);
+
+            send(client_socket,
+                 regno,
+                 strlen(regno) + 1,
+                 0);
+        }
+
+        memset(buffer, 0, sizeof(buffer));
+
+        recv(client_socket,
+             buffer,
+             sizeof(buffer) - 1,
+             0);
+
+        printf("\n%s\n", buffer);
+
+        if (strcmp(choice, "7") == 0)
+            break;
+    }
+
+    close(client_socket);
+
+    return 0;
+}
