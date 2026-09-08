@@ -1,0 +1,55 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#define BUFFER_SIZE 1024
+int main(int argc, char *argv[]) {
+    int sockfd;
+    struct sockaddr_in server_addr;
+    char buffer[BUFFER_SIZE];
+    socklen_t addr_len;
+    ssize_t bytes_received;
+    if (argc != 3) {
+        fprintf(stderr, "Usage: %s <Server_IP> <Server_Port>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+    server_addr.sin_family = AF_INET;
+    int port = atoi(argv[2]);
+    server_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, argv[1], &server_addr.sin_addr) <= 0) {
+        fprintf(stderr, "Invalid IP address: %s\n", argv[1]);
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+    addr_len = sizeof(server_addr);
+    printf("UDP Chat Client Started (Targeting %s:%d)\n", argv[1], port);
+    printf("Type 'exit' to end the chat.\n");
+    while (1) {
+        printf("\nClient: ");
+        fgets(buffer, BUFFER_SIZE, stdin);
+        sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        if (strcmp(buffer, "exit\n") == 0 || strcmp(buffer, "exit") == 0) {
+            printf("Chat ended.\n");
+            break;
+        }
+        bytes_received = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, (struct sockaddr *)&server_addr, &addr_len);
+        if (bytes_received < 0) {
+            perror("Receive failed");
+            break;
+        }
+        buffer[bytes_received] = '\0';
+        printf("Server: %s", buffer);
+        if (strcmp(buffer, "exit\n") == 0 || strcmp(buffer, "exit") == 0) {
+            printf("Server ended the chat.\n");
+            break;
+        }
+    }
+    close(sockfd);
+    return 0;
+}
