@@ -1,0 +1,130 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#define MAX_BITS 100000
+#define MAX_POLY 100
+void checkCRC(char frame[], char divisor[], char remainder[])
+{
+    char temp[MAX_BITS];
+    int frameLen;
+    int divisorLen;
+    int i, j;
+    frameLen = strlen(frame);
+    divisorLen = strlen(divisor);
+    strcpy(temp, frame);
+    for (i = 0; i <= frameLen - divisorLen; i++)
+    {
+        if (temp[i] == '1')
+        {
+            for (j = 0; j < divisorLen; j++)
+            {
+                if (temp[i + j] == divisor[j])
+                    temp[i + j] = '0';
+                else
+                    temp[i + j] = '1';
+            }
+        }
+    }
+    for (i = 0; i < divisorLen - 1; i++)
+    {
+        remainder[i] =
+            temp[frameLen - divisorLen + 1 + i];
+    }
+    remainder[divisorLen - 1] = '\0';
+}
+int main(int argc, char *argv[])
+{
+    int server_fd, client_fd;
+    int port, polyLen, frameLen;
+    int i, error = 0;
+    char divisor[MAX_POLY];
+    char frame[MAX_BITS];
+    char remainder[MAX_POLY];
+    FILE *fp;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len;
+    if (argc != 2)
+    {
+        printf("Usage: %s <port>\n", argv[0]);
+        exit(1);
+    }
+    port = atoi(argv[1]);
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0)
+    {
+        perror("Socket creation failed");
+        exit(1);
+    }
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(port);
+    if (bind(server_fd,(struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0)
+    {
+        perror("Bind failed");
+        exit(1);
+    }
+    listen(server_fd, 5);
+    printf("Server waiting on port %d\n", port);
+    client_len = sizeof(client_addr);
+    client_fd = accept(server_fd,(struct sockaddr *)&client_addr,
+                       &client_len);
+    if (client_fd < 0)
+    {
+        perror("Accept failed");
+        exit(1);
+    }
+    printf("Client connected.\n");
+    recv(client_fd, &polyLen, sizeof(int), 0);
+    recv(client_fd, divisor, polyLen, 0);
+    divisor[polyLen] = '\0';
+    recv(client_fd, &frameLen, sizeof(int), 0);
+    recv(client_fd, frame, frameLen, 0);
+    frame[frameLen] = '\0';
+    printf("\nReceived Polynomial in Binary: %s\n", divisor);
+    printf("\nReceived Frame:\n%s\n", frame);
+    checkCRC(frame, divisor, remainder);
+    printf("\nCRC Remainder: %s\n", remainder);
+    for (i = 0; remainder[i] != '\0'; i++)
+    {
+        if (remainder[i] == '1')
+        {
+            error = 1;
+            break;
+        }
+    }
+    if (error == 0)
+    {
+        printf("\nNo Error Detected.\n");
+        fp = fopen("output.txt", "w");
+        if (fp != NULL)
+        {
+            fprintf(fp, "Received Frame:\n%s\n", frame);
+            fprintf(fp, "Binary Polynomial: %s\n", divisor);
+            fprintf(fp, "CRC Remainder: %s\n", remainder);
+            fprintf(fp, "RESULT: NO ERROR DETECTED\n");
+            fclose(fp);
+        }
+        printf("Result stored in output.txt\n");
+    }
+    else
+    {
+        printf("\nError Detected.\n");
+        fp = fopen("error_output.txt", "w");
+        if (fp != NULL)
+        {
+            fprintf(fp, "Received Frame:\n%s\n", frame);
+            fprintf(fp, "Binary Polynomial: %s\n", divisor);
+            fprintf(fp, "CRC Remainder: %s\n", remainder);
+            fprintf(fp, "RESULT: ERROR DETECTED\n");
+            fclose(fp);
+        }
+        printf("Result stored in error_output.txt\n");
+    }
+    close(client_fd);
+    close(server_fd);
+    return 0;
+}
