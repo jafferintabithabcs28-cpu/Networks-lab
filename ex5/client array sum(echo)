@@ -1,0 +1,57 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#define MAX 100
+int main(int argc, char *argv[])
+{
+    int client_fd;
+    int port, size, i;
+    int array[MAX];
+    int sum;
+    struct sockaddr_in server_addr;
+    if (argc != 3)
+    {
+        printf("Usage: %s <server_ip> <port>\n", argv[0]);
+        exit(1);
+    }
+    port = atoi(argv[2]);
+    client_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_fd < 0)
+    {
+        perror("Socket creation failed");
+        exit(1);
+    }
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET,
+                  argv[1],
+                  &server_addr.sin_addr) <= 0)
+    {
+        printf("Invalid IP address.\n");
+        exit(1);
+    }
+    if (connect(client_fd,
+                (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0)
+    {
+        perror("Connection failed");
+        exit(1);
+    }
+    printf("Connected to server.\n");
+    printf("Enter number of elements: ");
+    scanf("%d", &size);
+    printf("Enter %d array elements:\n", size);
+    for (i = 0; i < size; i++)
+    {
+        scanf("%d", &array[i]);
+    }
+    send(client_fd, &size, sizeof(int), 0);
+    send(client_fd, array, size * sizeof(int), 0);
+    recv(client_fd, &sum, sizeof(int), 0);
+    printf("\nSum returned by server = %d\n", sum);
+    close(client_fd);
+    return 0;
+}
