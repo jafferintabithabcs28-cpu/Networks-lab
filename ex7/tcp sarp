@@ -1,0 +1,326 @@
+#include <stdio.h>
+
+#include <stdlib.h>
+
+#include <string.h>
+
+#include <unistd.h>
+
+#include <arpa/inet.h>
+
+#include <sys/socket.h>
+
+#include <sys/types.h>
+
+#include <netinet/in.h>
+
+#include <sys/file.h>
+
+#include <fcntl.h>
+
+#include <signal.h>
+
+#define BUFFER_SIZE 1024
+#define TABLE_FILE "arp_table.txt"
+
+int search_ip(char * ip, char * mac) {
+  FILE * fp;
+  char table_ip[50];
+  char table_mac[50];
+
+  fp = fopen(TABLE_FILE, "r");
+
+  if (fp == NULL)
+    return 0;
+
+  while (fscanf(fp, "%49s %49s", table_ip, table_mac) == 2) {
+    if (strcmp(table_ip, ip) == 0) {
+      strcpy(mac, table_mac);
+      fclose(fp);
+      return 1;
+    }
+  }
+
+  fclose(fp);
+  return 0;
+}
+
+void add_to_table(char * ip, char * mac) {
+  FILE * fp;
+
+  fp = fopen(TABLE_FILE, "a");
+
+  if (fp == NULL) {
+    perror("fopen");
+    return;
+  }
+
+  fprintf(fp, "%s %s\n", ip, mac);
+
+  fclose(fp);
+}
+
+void generate_unique_mac(char * mac) {
+  int number = 1;
+
+  FILE * fp;
+
+  char existing_ip[50];
+  char existing_mac[50];
+
+  while (1) {
+    snprintf(mac,
+      20,
+      "02:00:00:00:%02X:%02X",
+      (number >> 8) & 0xFF,
+      number & 0xFF);
+
+    int found = 0;
+
+    fp = fopen(TABLE_FILE, "r");
+
+    if (fp != NULL) {
+      while (fscanf(fp,
+          "%49s %49s",
+          existing_ip,
+          existing_mac) == 2) {
+        if (strcmp(existing_mac, mac) == 0) {
+          found = 1;
+          break;
+        }
+      }
+
+      fclose(fp);
+    }
+
+    if (!found)
+      break;
+
+    number++;
+  }
+}
+
+int main(int argc, char * argv[]) {
+  int server_fd;
+  int client_fd;
+  int port;
+  int n;
+  int opt = 1;
+
+  char ip[50];
+  char mac[50];
+  char buffer[BUFFER_SIZE];
+
+  struct sockaddr_in server_addr;
+  struct sockaddr_in client_addr;
+
+  socklen_t len;
+
+  pid_t pid;
+
+  FILE * fp;
+
+  if (argc != 2) {
+    printf("Usage: %s <port>\n", argv[0]);
+    return 1;
+  }
+
+  port = atoi(argv[1]);
+
+  printf("========================================\n");
+  printf("       CONCURRENT ARP SERVER\n");
+  printf("========================================\n");
+
+  printf("\nServer Port: %d\n", port);
+
+  server_fd = socket(AF_INET,
+    SOCK_STREAM,
+    0);
+
+  if (server_fd < 0) {
+    perror("socket");
+    return 1;
+  }
+
+  if (setsockopt(server_fd,
+      SOL_SOCKET,
+      SO_REUSEADDR, &
+      opt,
+      sizeof(opt)) < 0) {
+    perror("setsockopt");
+    close(server_fd);
+    return 1;
+  }
+  memset( & server_addr, 0, sizeof(server_addr));
+
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  server_addr.sin_port = htons(port);
+
+  if (bind(server_fd,
+      (struct sockaddr * ) & server_addr,
+      sizeof(server_addr)) < 0) {
+    perror("bind");
+    close(server_fd);
+    return 1;
+  }
+
+  if (listen(server_fd, SOMAXCONN) < 0) {
+    perror("listen");
+    close(server_fd);
+    return 1;
+  }
+
+  signal(SIGCHLD, SIG_IGN);
+
+  fp = fopen(TABLE_FILE, "a");
+
+  if (fp != NULL)
+    fclose(fp);
+
+  printf("\nServer started successfully.\n");
+  printf("Port: %d\n", port);
+  printf("ARP table: %s\n", TABLE_FILE);
+  printf("Waiting for clients...\n");
+
+  while (1) {
+    len = sizeof(client_addr);
+
+    client_fd = accept(server_fd,
+      (struct sockaddr * ) & client_addr, &
+      len);
+
+    if (client_fd < 0) {
+      perror("accept");
+      continue;
+    }
+
+    printf("\nClient connected: %s:%d\n",
+      inet_ntoa(client_addr.sin_addr),
+      ntohs(client_addr.sin_port));
+
+    pid = fork();
+
+    if (pid < 0) {
+      perror("fork");
+      close(client_fd);
+      continue;
+    }
+
+    if (pid == 0) {
+      close(server_fd);
+
+      n = recv(client_fd,
+        ip,
+        sizeof(ip) - 1,
+        0);
+
+      if (n <= 0) {
+        close(client_fd);
+        exit(0);
+      }
+
+      ip[n] = '\0';
+
+      printf("Child %d: Received IP = %s\n",
+        getpid(),
+        ip);
+
+      if (search_ip(ip, mac)) {
+        strcpy(buffer, "FOUND ");
+        strcat(buffer, mac);
+
+        send(client_fd,
+          buffer,
+          strlen(buffer),
+          0);
+
+        printf("Child %d: MAC found = %s\n",
+          getpid(),
+          mac);
+
+        close(client_fd);
+        exit(0);
+      }
+
+      strcpy(buffer, "NOT_FOUND");
+
+      send(client_fd,
+        buffer,
+        strlen(buffer),
+        0);
+
+      printf("Child %d: IP not found\n",
+        getpid());
+
+      n = recv(client_fd,
+        buffer,
+        sizeof(buffer) - 1,
+        0);
+
+      if (n > 0) {
+        buffer[n] = '\0';
+
+        if (strcmp(buffer, "YES") == 0) {
+          int lock_fd;
+
+          lock_fd = open(TABLE_FILE, O_RDWR);
+
+          if (lock_fd >= 0)
+            flock(lock_fd, LOCK_EX);
+
+          if (search_ip(ip, mac)) {
+            strcpy(buffer, "FOUND ");
+            strcat(buffer, mac);
+          } else {
+   
+            generate_unique_mac(mac);
+
+            add_to_table(ip, mac);
+
+            strcpy(buffer, "ADDED ");
+            strcat(buffer, mac);
+
+            printf("Child %d: Added %s -> %s\n",
+              getpid(),
+              ip,
+              mac);
+          }
+
+          if (lock_fd >= 0) {
+            flock(lock_fd, LOCK_UN);
+            close(lock_fd);
+          }
+
+          send(client_fd,
+            buffer,
+            strlen(buffer),
+            0);
+        }
+
+        else {
+          strcpy(buffer, "NOT_ADDED");
+
+          send(client_fd,
+            buffer,
+            strlen(buffer),
+            0);
+
+          printf("Child %d: IP not added\n",
+            getpid());
+        }
+      }
+
+      close(client_fd);
+      exit(0);
+    }
+
+    else {
+      close(client_fd);
+    }
+  }
+
+  close(server_fd);
+
+  return 0;
+}
