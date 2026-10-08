@@ -1,0 +1,97 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#define BUFFER_SIZE 1024
+int main(int argc, char *argv[])
+{
+    int sockfd;
+    int port;
+    int n;
+    char *server_ip;
+    char filename[256];
+    char buffer[BUFFER_SIZE];
+    struct sockaddr_in server_addr;
+    if (argc != 3)
+    {
+        printf("Usage: %s <server_ip> <port>\n",
+               argv[0]);
+        return 1;
+    }
+    server_ip = argv[1];
+    port = atoi(argv[2]);
+    printf("========================================\n");
+    printf("       CONCURRENT FILE CLIENT\n");
+    printf("=======================================\n");
+    printf("Server IP   : %s\n", server_ip);
+    printf("Server Port : %d\n", port);
+    printf("Enter filename: ");
+    scanf("%255s", filename);
+    sockfd = socket(AF_INET,SOCK_STREAM,0);
+    if (sockfd < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET,
+                  server_ip,
+                  &server_addr.sin_addr) <= 0)
+    {
+        printf("Invalid server IP address.\n");
+        close(sockfd);
+        return 1;
+    }
+    if (connect(sockfd,
+                (struct sockaddr *)&server_addr,
+                sizeof(server_addr)) < 0)
+    {
+        perror("connect");
+        close(sockfd);
+        return 1;
+    }
+    printf("\nConnected to server.\n");
+    send(sockfd,filename,strlen(filename),0);
+    memset(buffer, 0, sizeof(buffer));
+    n = recv(sockfd,buffer,sizeof(buffer) - 1,0);
+    if (n <= 0)
+    {
+        printf("Server disconnected.\n");
+
+        close(sockfd);
+        return 1;
+    }
+    buffer[n] = '\0';
+    if (strcmp(buffer, "FILE_NOT_FOUND") == 0)
+    {
+        printf("\nFile is not present on the server.\n");
+        close(sockfd);
+        return 0;
+    }
+    if (strcmp(buffer, "FILE_FOUND") == 0)
+    {
+        printf("\nFile found on server.\n");
+        printf("\n========== FILE CONTENT ==========\n");
+        while (1)
+        {
+            memset(buffer, 0, sizeof(buffer));
+            n = recv(sockfd,
+                     buffer,
+                     sizeof(buffer) - 1,
+                     0);
+            if (n <= 0)
+                break;
+            buffer[n] = '\0';
+            if (strcmp(buffer, "FILE_END") == 0)
+                break;
+            printf("%s", buffer);
+        }
+        printf("\n========== END OF FILE ==========\n");
+    }
+    close(sockfd);
+    return 0;
+}
