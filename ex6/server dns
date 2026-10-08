@@ -1,0 +1,88 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#define BUFFER_SIZE 1024
+#define MAX_ENTRIES 5
+struct DNS
+{
+    char url[100];
+    char ip[50];
+};
+int main(int argc, char *argv[])
+{
+    int sockfd, i, found;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len;
+    char buffer[BUFFER_SIZE];
+    char response[BUFFER_SIZE];
+    ssize_t bytes_received;
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <Port_Number>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    struct DNS dns_table[MAX_ENTRIES] =
+    {
+        {"www.google.com", "142.250.195.78"},
+        {"www.yahoo.com", "98.137.11.163"},
+        {"www.facebook.com", "157.240.22.35"},
+        {"www.youtube.com", "142.250.195.78"},
+        {"www.mepcoeng.ac.in", "192.168.1.10"}
+    };
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+    server_addr.sin_family = AF_INET;
+    int port = atoi(argv[1]);
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("Bind failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+    printf("UDP DNS Server started on port %d...\n", port);
+    printf("Waiting for client requests...\n");
+    while (1)
+    {
+        addr_len = sizeof(client_addr);
+        bytes_received = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, 
+	      (struct sockaddr *)&client_addr, &addr_len);
+        if (bytes_received < 0)
+        {
+            perror("Receive failed");
+            continue;
+        }
+        buffer[bytes_received] = '\0';
+        buffer[strcspn(buffer, "\n")] = '\0';
+        printf("\nClient requested URL: %s\n", buffer);
+        found = 0;
+        for (i = 0; i < MAX_ENTRIES; i++)
+        {
+            if (strcmp(buffer, dns_table[i].url) == 0)
+            {
+                strcpy(response, dns_table[i].ip);
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+        {
+            strcpy(response, "URL NOT FOUND");
+        }
+        if (sendto(sockfd, response, strlen(response), 0,
+		 (struct sockaddr *)&client_addr, addr_len) < 0)
+        {
+            perror("Send failed");
+            continue;
+        }
+        printf("Response sent: %s\n", response);
+    }
+    close(sockfd);
+    return 0;
+}
