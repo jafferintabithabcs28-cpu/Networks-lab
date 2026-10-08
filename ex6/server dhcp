@@ -1,0 +1,221 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#define BUFFER_SIZE 4096
+#define MAX_SUBNETS 20
+struct Subnet
+{
+    char network_address[50];
+    char last_address[50];
+    int prefix;
+    int total_addresses;
+    int available;
+    char username[50];
+};
+unsigned int ipToInt(char *ip)
+{
+    unsigned int a, b, c, d;
+    sscanf(ip, "%u.%u.%u.%u", &a, &b, &c, &d);
+    return (a << 24) | (b << 16) | (c << 8) | d;
+}
+void intToIp(unsigned int ip, char *result)
+{
+    sprintf(result, "%u.%u.%u.%u",
+            (ip >> 24) & 255,
+            (ip >> 16) & 255,
+            (ip >> 8) & 255,
+            ip & 255);
+}
+int main(int argc, char *argv[])
+{
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <Port>\n", argv[0]);
+        fprintf(stderr, "Example: %s 8080\n", argv[0]);
+        return 1;
+    }
+    int port = atoi(argv[1]);
+    int sockfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len;
+    char beginning_address[50];
+    int original_mask;
+    int number_of_subnets;
+    struct Subnet subnets[MAX_SUBNETS];
+    unsigned int network_start;
+    unsigned int current_address;
+    unsigned int total_network_addresses;
+    unsigned int network_end;
+    char username[50];
+    char buffer[BUFFER_SIZE];
+    char response[BUFFER_SIZE];
+    int i, choice;
+    ssize_t bytes_received;
+    printf("========== DHCP SERVER CONFIGURATION ==========\n");
+    printf("Enter Beginning Network Address: ");
+    scanf("%49s", beginning_address);
+    printf("Enter Network Mask (Example: 24): ");
+    scanf("%d", &original_mask);
+    if (original_mask < 0 || original_mask > 32)
+    {
+        printf("Invalid network mask.\n");
+        return 1;
+    }
+    printf("Enter Number of Subnets: ");
+    scanf("%d", &number_of_subnets);
+    if (number_of_subnets <= 0 || number_of_subnets > MAX_SUBNETS)
+    {
+        printf("Invalid number of subnets.\n");
+        return 1;
+    }
+    network_start = ipToInt(beginning_address);
+    current_address = network_start;
+    for (i = 0; i < number_of_subnets; i++)
+    {
+        int subnet_mask;
+        unsigned int subnet_size;
+        unsigned int last_ip;
+        printf("\nEnter Mask for Subnet %d: ", i + 1);
+        scanf("%d", &subnet_mask);
+        if (subnet_mask < original_mask || subnet_mask > 32)
+        {
+            printf("Invalid subnet mask.\n");
+            return 1;
+        }
+        subnet_size = 1U << (32 - subnet_mask);
+        last_ip = current_address + subnet_size - 1;
+        intToIp(current_address, subnets[i].network_address);
+        intToIp(last_ip, subnets[i].last_address);
+        subnets[i].prefix = subnet_mask;
+        subnets[i].total_addresses = subnet_size;
+        subnets[i].available = 1;
+        strcpy(subnets[i].username, "");
+        current_address = last_ip + 1;
+    }
+    total_network_addresses = 1U << (32 - original_mask);
+    network_end = network_start + total_network_addresses - 1;
+    if (current_address > network_end + 1)
+    {
+        printf("\nERROR: Subnets exceed the original network range.\n");
+        return 1;
+    }
+    printf("\n========== SUBNET ALLOCATION ==========\n");
+    for (i = 0; i < number_of_subnets; i++)
+    {
+        printf("\nSubnet %d\n", i + 1);
+        printf("Subnet Address: %s/%d\n", subnets[i].network_address, subnets[i].prefix);
+        printf("First Address: %s\n", subnets[i].network_address);
+        printf("Last Address: %s\n", subnets[i].last_address);
+        printf("Total Addresses: %d\n", subnets[i].total_addresses);
+    }
+    if (current_address <= network_end)
+    {
+        char reserved_start[50];
+        char reserved_end[50];
+        intToIp(current_address, reserved_start);
+        intToIp(network_end, reserved_end);
+        printf("\n========== RESERVED ADDRESSES ==========\n");
+        printf("First Reserved Address: %s\n", reserved_start);
+        printf("Last Reserved Address: %s\n", reserved_end);
+    }
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0)
+    {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("Bind failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+    printf("\nDHCP Server started on port %d...\n", port);
+    printf("Waiting for clients...\n");
+    while (1)
+    {
+        addr_len = sizeof(client_addr);
+        bytes_received = recvfrom(sockfd, username, sizeof(username) - 1, 0,
+                                  (struct sockaddr *)&client_addr, &addr_len);
+        if (bytes_received < 0)
+        {
+            perror("Receive failed");
+            continue;
+        }
+        username[bytes_received] = '\0';
+        printf("\nClient Username: %s\n", username);
+        strcpy(response, "========== AVAILABLE SUBNETS ==========\n");
+        for (i = 0; i < number_of_subnets; i++)
+        {
+            char temp[300];
+            if (subnets[i].available)
+            {
+                sprintf(temp,
+                        "%d. %s/%d\n"
+                        "   First: %s\n"
+                        "   Last: %s\n"
+                        "   Total Addresses: %d\n"
+                        "   Status: Available\n\n",
+                        i + 1,
+                        subnets[i].network_address,
+                        subnets[i].prefix,
+                        subnets[i].network_address,
+                        subnets[i].last_address,
+                        subnets[i].total_addresses);
+            }
+            else
+            {
+                sprintf(temp, "%d. %s/%d - Assigned\n\n", i + 1, subnets[i].network_address, subnets[i].prefix);
+            }
+            strcat(response, temp);
+        }
+        sendto(sockfd, response, strlen(response), 0, (struct sockaddr *)&client_addr, addr_len);
+        bytes_received = recvfrom(sockfd, buffer, BUFFER_SIZE - 1, 0, (struct sockaddr *)&client_addr, &addr_len);
+        if (bytes_received < 0)
+        {
+            perror("Receive failed");
+            continue;
+        }
+        buffer[bytes_received] = '\0';
+        choice = atoi(buffer);
+        if (choice < 1 || choice > number_of_subnets)
+        {
+            strcpy(response, "INVALID SUBNET SELECTION");
+        }
+        else if (subnets[choice - 1].available == 0)
+        {
+            strcpy(response, "SUBNET NOT AVAILABLE");
+        }
+        else
+        {
+            subnets[choice - 1].available = 0;
+            strcpy(subnets[choice - 1].username, username);
+            sprintf(response,
+                    "========== DHCP ASSIGNMENT ==========\n"
+                    "Username: %s\n"
+                    "Assigned Subnet: %s/%d\n"
+                    "First Address: %s\n"
+                    "Last Address: %s\n"
+                    "Total Addresses: %d\n"
+                    "Status: ASSIGNED SUCCESSFULLY",
+                    username,
+                    subnets[choice - 1].network_address,
+                    subnets[choice - 1].prefix,
+                    subnets[choice - 1].network_address,
+                    subnets[choice - 1].last_address,
+                    subnets[choice - 1].total_addresses);
+            printf("Subnet %s/%d assigned to %s\n",
+                   subnets[choice - 1].network_address,
+                   subnets[choice - 1].prefix,
+                   username);
+        }
+        sendto(sockfd, response, strlen(response), 0, (struct sockaddr *)&client_addr, addr_len);
+    }
+    close(sockfd);
+    return 0;
+}
