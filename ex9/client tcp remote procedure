@@ -1,0 +1,40 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+int main(int argc, char *argv[])
+{
+    int sockfd;
+    struct sockaddr_in server;
+    socklen_t len = sizeof(server);
+    char procedure[20];
+    int a, b, result;
+    if (argc != 3)
+    {
+        printf("Usage: %s <IP> <port>\n", argv[0]);
+        return 1;
+    }
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    server.sin_family = AF_INET;
+    server.sin_port = htons(atoi(argv[2]));
+    server.sin_addr.s_addr = inet_addr(argv[1]);
+    printf("Enter procedure (add/sub/mul): ");
+    scanf("%s", procedure);
+    printf("Enter two numbers: ");
+    scanf("%d %d", &a, &b);
+    sendto(sockfd, procedure, sizeof(procedure), 0,
+           (struct sockaddr *)&server, len);
+    a = htonl(a);
+    b = htonl(b);
+    sendto(sockfd, &a, sizeof(a), 0,
+           (struct sockaddr *)&server, len);
+    sendto(sockfd, &b, sizeof(b), 0,
+           (struct sockaddr *)&server, len);
+    recvfrom(sockfd, &result, sizeof(result), 0,
+             (struct sockaddr *)&server, &len);
+    result = ntohl(result);
+    printf("Result = %d\n", result);
+    close(sockfd);
+    return 0;
+}
