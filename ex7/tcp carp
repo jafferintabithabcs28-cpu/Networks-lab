@@ -1,0 +1,235 @@
+#include <stdio.h>
+
+#include <stdlib.h>
+
+#include <string.h>
+
+#include <unistd.h>
+
+#include <arpa/inet.h>
+
+#include <sys/socket.h>
+
+#define BUFFER_SIZE 1024
+
+int check_local_cache(char * ip, char * mac) {
+  char command[200];
+  char line[BUFFER_SIZE];
+
+  FILE * fp;
+
+  snprintf(command,
+    sizeof(command),
+    "ip neigh show %s 2>/dev/null",
+    ip);
+
+  fp = popen(command, "r");
+
+  if (fp == NULL)
+    return 0;
+
+  while (fgets(line,
+      sizeof(line),
+      fp) != NULL) {
+    char * lladdr;
+
+    lladdr = strstr(line, "lladdr");
+
+    if (lladdr != NULL) {
+      sscanf(lladdr + 6,
+        "%49s",
+        mac);
+
+      pclose(fp);
+
+      return 1;
+    }
+  }
+
+  pclose(fp);
+
+  return 0;
+}
+
+int main(int argc, char * argv[]) {
+  int sockfd;
+  int port;
+  int n;
+
+  char * server_ip;
+
+  char ip[50];
+  char mac[50];
+
+  char buffer[BUFFER_SIZE];
+  char choice[10];
+
+  struct sockaddr_in server_addr;
+
+  if (argc != 3) {
+    printf("Usage: %s <server_ip> <port>\n",
+      argv[0]);
+
+    return 1;
+  }
+
+  server_ip = argv[1];
+  port = atoi(argv[2]);
+
+  printf("========================================\n");
+  printf("        CONCURRENT ARP CLIENT\n");
+  printf("========================================\n");
+
+  printf("Server IP   : %s\n", server_ip);
+  printf("Server Port : %d\n", port);
+
+  printf("Enter IP address to search: ");
+  scanf("%49s", ip);
+
+  printf("\nChecking local ARP cache...\n");
+
+  if (check_local_cache(ip, mac)) {
+    printf("\nIP found in local ARP cache.\n");
+
+    printf("IP  : %s\n", ip);
+    printf("MAC : %s\n", mac);
+
+    return 0;
+  }
+
+  printf("IP not found in local ARP cache.\n");
+
+  sockfd = socket(AF_INET,
+    SOCK_STREAM,
+    0);
+
+  if (sockfd < 0) {
+    perror("socket");
+    return 1;
+  }
+
+  memset( & server_addr, 0, sizeof(server_addr));
+
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(port);
+
+  if (inet_pton(AF_INET,
+      server_ip, &
+      server_addr.sin_addr) <= 0) {
+    printf("Invalid server IP.\n");
+
+    close(sockfd);
+
+    return 1;
+  }
+
+  if (connect(sockfd,
+      (struct sockaddr * ) & server_addr,
+      sizeof(server_addr)) < 0) {
+    perror("connect");
+
+    close(sockfd);
+
+    return 1;
+  }
+
+  printf("\nConnected to ARP server.\n");
+
+  send(sockfd,
+    ip,
+    strlen(ip),
+    0);
+
+  n = recv(sockfd,
+    buffer,
+    sizeof(buffer) - 1,
+    0);
+
+  if (n <= 0) {
+    printf("Server disconnected.\n");
+
+    close(sockfd);
+
+    return 1;
+  }
+
+  buffer[n] = '\0';
+
+  if (strncmp(buffer, "FOUND ", 6) == 0) {
+    strcpy(mac, buffer + 6);
+
+    printf("\nIP found in server ARP table.\n");
+
+    printf("IP  : %s\n", ip);
+    printf("MAC : %s\n", mac);
+
+    close(sockfd);
+
+    return 0;
+  }
+
+  if (strcmp(buffer, "NOT_FOUND") == 0) {
+    printf("\nIP is not present in:\n");
+    printf("1. Local ARP cache\n");
+    printf("2. Server ARP table\n");
+
+    printf("\nDo you want to add this IP to the server? (yes/no): ");
+
+    scanf("%9s", choice);
+
+    if (strcasecmp(choice, "yes") == 0) {
+      send(sockfd,
+        "YES",
+        3,
+        0);
+
+      n = recv(sockfd,
+        buffer,
+        sizeof(buffer) - 1,
+        0);
+
+      if (n > 0) {
+        buffer[n] = '\0';
+
+        if (strncmp(buffer, "ADDED ", 6) == 0) {
+          strcpy(mac, buffer + 6);
+
+          printf("\nIP added successfully.\n");
+
+          printf("IP  : %s\n", ip);
+          printf("MAC : %s\n", mac);
+        }
+
+        else if (strncmp(buffer, "FOUND ", 6) == 0) {
+          strcpy(mac, buffer + 6);
+
+          printf("\nAnother client already added this IP.\n");
+
+          printf("IP  : %s\n", ip);
+          printf("MAC : %s\n", mac);
+        }
+      }
+    }
+
+    else {
+      send(sockfd,
+        "NO",
+        2,
+        0);
+
+      n = recv(sockfd,
+        buffer,
+        sizeof(buffer) - 1,
+        0);
+
+      if (n > 0)
+        buffer[n] = '\0';
+
+      printf("\nIP was not added to the server.\n");
+    }
+  }
+
+  close(sockfd);
+
+  return 0;
+}
