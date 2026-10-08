@@ -1,0 +1,589 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define MAX_DATA 1000
+#define MAX_NODES 50
+
+struct Node
+{
+    char url[50];
+    int ip[4];
+    char mac[18];
+    int port;
+};
+
+struct Node table[MAX_NODES];
+int entrycon = 0;
+int activeSourceIdx = -1;
+int activeDestIdx = -1;
+char data[MAX_DATA];
+char filename[50];
+int packetSize;
+int frameSize;
+unsigned long int next_seed = 42; 
+
+unsigned int custom_rand() {
+    next_seed = next_seed * 1103515245 + 12345;
+    return (unsigned int)(next_seed / 65536) % 32768;
+}
+
+void custom_srand(unsigned int seed) {
+    next_seed = seed;
+}
+
+void binary8(int num)
+{
+    int i;
+    for(i=7; i>=0; i--) {
+        printf("%d", (num>>i)&1);
+    }
+}
+
+void binary16(int num)
+{
+    int i;
+    for(i=15; i>=0; i--) {
+        printf("%d", (num>>i)&1);
+    }
+}
+
+void macBinaryStr(char mac[], char *outStr) {
+    int value;
+    int k;
+    char temp[3];
+    int i, j = 0;
+    outStr[0] = '\0';
+    for(i = 0; mac[i] != '\0'; i++) {
+        if(mac[i] == ':') continue;
+        temp[j++] = mac[i];
+        if(j == 2) {
+            temp[2] = '\0';
+            value = (int)strtol(temp, NULL, 16);
+            char bin[9];
+            for(k = 7; k >= 0; k--) {
+                bin[7 - k] = ((value >> k) & 1) ? '1' : '0';
+            }
+            bin[8] = '\0';
+            strcat(outStr, bin);
+            strcat(outStr, " ");
+            j = 0;
+        }
+    }
+}
+
+void stringBinary(char str[])
+{
+    int i;
+    for(i=0; str[i]!='\0'; i++)
+    {
+        binary8((unsigned char)str[i]);
+        if(str[i+1] != '\0') printf(" ");
+    }
+}
+
+void ipBinary(int ip[])
+{
+    int i;
+    for(i=0; i<4; i++)
+    {
+        binary8(ip[i]);
+        if(i < 3) printf(" ");
+    }
+}
+
+void macBinary(char mac[])
+{
+    int value;
+    char temp[3];
+    int i, j=0;
+    int firstBlock = 1;
+    for(i=0; mac[i]!='\0'; i++)
+    {
+        if(mac[i]==':')
+            continue;
+        temp[j++]=mac[i];
+        if(j==2)
+        {
+            temp[2]='\0';
+            value=(int)strtol(temp, NULL, 16);
+            if(!firstBlock) printf(" ");
+            binary8(value);
+            firstBlock = 0;
+            j=0;
+        }
+    }
+}
+
+void generateIP(char url[], int ip[])
+{
+    int hash=0;
+    int i;
+    for(i=0; url[i]!='\0'; i++)
+        hash += url[i]*(i+1);
+        
+    ip[0]=192;
+    ip[1]=168;
+    ip[2]=(hash%254)+1;
+    ip[3]=((hash*3)%254)+1;
+}
+
+void generateMAC(char url[], char mac[])
+{
+    int hash=0;
+    int i;
+    for(i=0; url[i]!='\0'; i++)
+        hash += url[i]*(i+7);
+        
+    sprintf(mac,"%02X:%02X:%02X:%02X:%02X:%02X",
+            hash&0xFF,
+            (hash>>2)&0xFF,
+            (hash>>4)&0xFF,
+            (hash>>6)&0xFF,
+            (hash>>8)&0xFF,
+            (hash>>10)&0xFF);
+}
+
+int generatePort()
+{
+    return custom_rand() % 50000 + 1024;
+}
+
+void addNetworkNode()
+{
+    if(entrycon >= MAX_NODES) {
+        printf("Error: Table array registry structure full.\n");
+        return;
+    }
+    
+    printf("Enter Node URL: ");
+    scanf("%49s", table[entrycon].url);
+    generateIP(table[entrycon].url, table[entrycon].ip);
+    generateMAC(table[entrycon].url, table[entrycon].mac);
+    table[entrycon].port = generatePort();
+    
+    printf("Node registered successfully at Index [%d]!\n", entrycon);
+    entrycon++;
+}
+
+void deleteNodeByURL()
+{
+    char targetURL[50];
+    int i, j;
+    int found = 0;
+    
+    if(entrycon == 0) {
+        printf("\nRegistry is Empty. Nothing to delete.\n");
+        return;
+    }
+    
+    printf("\nEnter URL to delete: ");
+    scanf("%49s", targetURL);
+    
+    for(i = 0; i < entrycon; i++) {
+        if(strcmp(table[i].url, targetURL) == 0) {
+            found = 1;
+            for(j = i; j < entrycon - 1; j++) {
+                table[j] = table[j+1];
+            }
+            entrycon--;
+            i--; 
+            
+            activeSourceIdx = -1;
+            activeDestIdx = -1;
+        }
+    }
+    
+    if(found) {
+        printf("Success: URL and its parameters deleted successfully. Sessions reset.\n");
+    } else {
+        printf("Error: URL target not found in current table registry.\n");
+    }
+}
+
+void displayNodes()
+{
+    int i;
+    printf("\nSTORED VALUES IN STRUCTURE TABLE");
+    if(entrycon == 0)
+    {
+        printf("\n[Table Empty. No nodes found.]\n");
+        return;
+    }
+    
+    for(i = 0; i < entrycon; i++)
+    {
+        printf("\nNODE INDEX [%d]", i);
+        printf("\nURL: %s", table[i].url);
+        printf("\nIP: %d.%d.%d.%d", table[i].ip[0], table[i].ip[1], table[i].ip[2], table[i].ip[3]);
+        printf("\nMAC: %s", table[i].mac);
+        printf("\nPORT: %d\n", table[i].port);
+    }
+}
+
+void selectSessionEndpoints()
+{
+    displayNodes();
+    if(entrycon < 2)
+    {
+        printf("\nError: Please add at least two network nodes first.\n");
+        return;
+    }
+    
+    printf("\nEnter Active Source Index: ");
+    scanf("%d", &activeSourceIdx);
+    printf("Enter Active Destination Index: ");
+    scanf("%d", &activeDestIdx);
+    
+    if(activeSourceIdx < 0 || activeSourceIdx >= entrycon || activeDestIdx < 0 || activeDestIdx >= entrycon)
+    {
+        printf("Invalid mapping indices choice. Session reset.\n");
+        activeSourceIdx = -1; 
+        activeDestIdx = -1;
+    }
+}
+
+void getFileData()
+{
+    FILE *fp;
+    printf("\nEnter filename : ");
+    scanf("%49s", filename);
+    fp=fopen(filename, "r");
+    if(fp==NULL)
+    {
+        printf("\nFile not found.\n");
+        exit(0);
+    }
+    if (fgets(data, MAX_DATA, fp) == NULL) {
+        data[0] = '\0';
+    }
+    fclose(fp);
+    data[strcspn(data, "\n")]='\0';
+}
+
+void getSizes()
+{
+    printf("\nEnter Packet Size (in bits): ");
+    scanf("%d", &packetSize);
+    printf("Enter Frame Size (in bits): ");
+    scanf("%d", &frameSize);
+}
+
+void applicationLayer()
+{
+    int i;
+    printf("\n====================================");
+    printf("\nAPPLICATION LAYER\n");
+    printf("====================================\n");
+    printf("Application Data: %s\n", data);
+    printf("Output stream (Data bits): ");
+    for(i=0; data[i]!='\0'; i++)
+    {
+        binary8((unsigned char)data[i]);
+        printf(" ");
+    }
+    printf("\n");
+}
+
+void transportLayer()
+{
+    struct Node src = table[activeSourceIdx];
+    struct Node dst = table[activeDestIdx];
+    
+    printf("\n====================================");
+    printf("\nTRANSPORT LAYER\n");
+    printf("====================================\n");
+    printf("Added TCP/UDP Segment Headers:\n");
+    printf(" Source Port bits: "); binary16(src.port); printf("\n");
+    printf(" Destination Port bits: "); binary16(dst.port); printf("\n");
+    printf("\n[Appended Output stream] -> Segment (Ports + Data):\n");
+    binary16(src.port); printf(" ");
+    binary16(dst.port); printf(" ");
+    stringBinary(data);
+    printf("\n");
+}
+
+void networkLayer()
+{
+    struct Node src = table[activeSourceIdx];
+    struct Node dst = table[activeDestIdx];
+    int dataLength = strlen(data);
+    int totalBits = dataLength * 8;
+    int bitIndex = 0;
+    int packetCount = 0;
+    
+    printf("\n====================================");
+    printf("\nNETWORK LAYER (PACKET ENCAPSULATION)\n");
+    printf("====================================\n");
+    
+    while (bitIndex < totalBits)
+    {
+        int packetStartBit = bitIndex;
+        int packetEndBit = bitIndex + packetSize - 1;
+        int b;
+        packetCount++;
+        
+        printf("\n[PACKET %d] (Payload Bits %d to %d)\n", packetCount, packetStartBit, (packetEndBit >= totalBits) ? totalBits - 1: packetEndBit);
+        printf("Headers -> Source IP: "); ipBinary(src.ip);
+        printf("| Destination IP: "); ipBinary(dst.ip); printf("\n");
+        printf("Segment -> Source Port: "); binary16(src.port);
+        printf(" | Destination Port: "); binary16(dst.port); printf("\n");
+        printf("Full Packet Binary Output:\n");
+        ipBinary(src.ip); printf(" ");
+        ipBinary(dst.ip); printf(" ");
+        binary16(src.port); printf(" ");
+        binary16(dst.port); printf(" ");
+        
+        for (b = packetStartBit; b <= packetEndBit; b++)
+        {
+            if (b >= totalBits)
+            {
+                printf("0");
+            }
+            else
+            {
+                int charPos = b/8;
+                int bitPos = 7 - (b% 8);
+                int bitValue = (data[charPos] >> bitPos) & 1;
+                printf("%d", bitValue);
+            }
+        }
+        printf("\n");
+        bitIndex += packetSize;
+    }
+    printf("\nTotal Packets Generated: %d\n", packetCount);
+}
+
+void dataLinkLayer()
+{
+    struct Node src = table[activeSourceIdx];
+    struct Node dst = table[activeDestIdx];
+    int dataLength = strlen(data);
+    int totalBits = dataLength * 8;
+    int bitIndex = 0;
+    int packetCount = 0;
+    int totalFrameCount = 0;
+    int b;
+    
+    char totalOriginalBits[MAX_DATA * 9] = ""; 
+    
+    printf("\n====================================");
+    printf("\nDATA LINK LAYER (FRAME BREAKDOWN & FINAL BIT STUFFING)\n");
+    printf("====================================\n");
+    
+    while (bitIndex < totalBits)
+    {
+        int packetStartBit = bitIndex;
+        int packetEndBit = bitIndex + packetSize - 1;
+        int currentFrameBit = packetStartBit;
+        packetCount++;
+        
+        printf("\n------------------------------------\n");
+        printf("PROCESSING NETWORK PACKET %d (Payload Range: %d to %d)\n", packetCount, packetStartBit, (packetEndBit >= totalBits) ? totalBits - 1 : packetEndBit);
+        printf("------------------------------------\n");
+        
+        while (currentFrameBit <= packetEndBit)
+        {
+            int frameEndBit = currentFrameBit + frameSize - 1;
+            totalFrameCount++; 
+            
+            printf(" [FRAME %d] (Bits %d to %d)\n", totalFrameCount, currentFrameBit, frameEndBit);
+            printf(" Headers -> Source MAC: "); 
+	    macBinary(src.mac);
+	    printf("| Destination MAC: "); 
+	    macBinary(dst.mac);
+	    printf("\n");
+	    printf(" Full Frame Stream: ");
+	    macBinary(src.mac);
+	    printf(" ");
+	    macBinary(dst.mac);
+	    printf(" ");
+	    for (b = currentFrameBit;b <= frameEndBit; b++)
+	    {
+	       int bitValue = 0;
+	       if (b < totalBits)
+	       {
+		  int charPos = b / 8;
+		  int bitPos = 7 - (b % 8);
+		  bitValue = (data[charPos] >> bitPos) & 1;
+	       }
+	       printf("%d", bitValue);
+	       char tmp[2];
+	       sprintf(tmp, "%d", bitValue);
+	       strcat(totalOriginalBits, tmp);
+	    }
+	    printf("\n\n");
+	    currentFrameBit += frameSize;
+	}
+	bitIndex += packetSize;
+    }
+    printf("====================================");
+    printf("\nTRANSMISSION METRICS SUMMARY");
+    printf("\n====================================");
+    printf("\nTotal Packets Processed: %d", packetCount);
+    printf("\nTotal Frames Transmitted: %d\n", totalFrameCount);
+    printf("\n====================================");
+    printf("\nFINAL DATA LINK LAYER DATA BIT STUFFING RUN");
+    printf("\n====================================");
+    printf("\nData from upper layer       : %s\n", totalOriginalBits);
+    printf("Stuffed Upper Layer Data    : ");
+    char totalStuffedBits[MAX_DATA * 10] = "";
+    int consecutiveOnes = 0;
+    int stuffedIdx = 0;
+    int extraBitsCount = 0;
+    int i;
+    for(i = 0; totalOriginalBits[i] != '\0'; i++)
+    {
+       printf("%c", totalOriginalBits[i]);
+       totalStuffedBits[stuffedIdx++] = totalOriginalBits[i];
+       if(totalOriginalBits[i] == '1') 
+       {
+	  consecutiveOnes++;
+	  if(consecutiveOnes == 5)
+	  {
+	     //printf("\033[1;31m0\033[0m");
+	     printf("0");
+	     totalStuffedBits[stuffedIdx++] = '0';
+	     consecutiveOnes = 0;
+	     extraBitsCount++;
+	  }
+       }
+       else 
+       {
+	  consecutiveOnes = 0;
+       }
+    }
+    totalStuffedBits[stuffedIdx] = '\0';
+    printf("\n");
+    printf("\n--- Frame Sent Configuration ---\n");
+    printf("[Flag]   : 01111110\n");
+    printf("[Header] : "); 
+    macBinary(src.mac);
+    printf("  ");
+    macBinary(dst.mac); 
+    printf("\n");
+    printf("[Data]   : %s\n", totalStuffedBits);
+    printf("[Trailer]: 0000000000000000\n");
+    printf("[Flag]   : 01111110\n");
+    printf("\nFinal Protocol Frame Stream Output:\n");
+    printf("01111110  ");
+    macBinary(src.mac);
+    printf(" "); 
+    macBinary(dst.mac); printf("  "); 
+    printf("%s  ", totalStuffedBits); 
+    printf("0000000000000000  "); 
+    printf("01111110\n"); 
+    printf("\nTransmission Metrics: Added Extra %d bits during processing.\n", extraBitsCount);
+    FILE *fileLog = fopen("datalink_output.txt", "a");
+    if (fileLog != NULL)
+    {
+       char srcMacBin[100], dstMacBin[100];
+       macBinaryStr(src.mac, srcMacBin);
+       macBinaryStr(dst.mac, dstMacBin);
+       fprintf(fileLog, "\n--- NEW TRANSMISSION SIMULATION ---\n");
+       fprintf(fileLog, "Data from upper layer: %s\n", totalOriginalBits);
+       fprintf(fileLog, "Stuffed Upper Layer Data: %s\n", totalStuffedBits);
+       fprintf(fileLog, "Frame Sent Layout: 01111110 [Header: %s%s] [%s] [Trailer: 0000000000000000] 01111110\n", srcMacBin, dstMacBin, totalStuffedBits);
+       fclose(fileLog);
+    }
+}
+void physicalLayer()
+{
+   struct Node src = table[activeSourceIdx];
+   struct Node dst = table[activeDestIdx];
+   printf("\n====================================");
+   printf("\nPHYSICAL LAYER\n");
+   printf("====================================\n");
+   printf("[Appended Output stream] -> Final Bitstream over physical medium:\n");
+   macBinary(src.mac);
+   printf("  ");
+   macBinary(dst.mac);
+   printf("  ");
+   ipBinary(src.ip);
+   printf("  ");
+   ipBinary(dst.ip);
+   printf("  ");
+   binary16(src.port);
+   printf(" ");
+   binary16(dst.port);
+   printf(" ");
+   stringBinary(data);
+   printf("\n");
+}
+int main()
+{
+   int choice;
+   unsigned int manualSeed;
+   printf("Enter a manual seed value for custom hashing/ports (e.g. 12345): ");
+   if(scanf("%u", &manualSeed) != 1)
+   {
+      manualSeed = 5555;
+   }
+   custom_srand(manualSeed);
+   strcpy(data, "Welcome");
+   packetSize = 32;
+   frameSize = 16;
+   while(1)
+   {
+      printf("\n=== NETWORK PROTOCOL SIMULATOR ===");
+      printf("\n1. Add Network Node");
+      printf("\n2. Display Nodes");
+      printf("\n3. Delete Node by URL");
+      printf("\n4. Select Session Endpoints");
+      printf("\n5. Load File Data");
+      printf("\n6. Set Packet & Frame Sizes");
+      printf("\n7. Run Simulation (All Layers)");
+      printf("\n8. Exit");
+      printf("\nEnter your choice: ");
+      if (scanf("%d", &choice) !=1)
+	 break;
+      switch(choice)
+      {
+	 case 1:
+	    addNetworkNode();
+	    break;
+	 case 2:
+	    displayNodes();
+	    break;
+	    case 3:
+	    deleteNodeByURL();
+	    break;
+         case 4:
+	    selectSessionEndpoints();
+	    break;
+	 case 5:
+	    getFileData();
+	    break;
+	 case 6:
+	    getSizes();
+	    break;
+	 case 7:
+	    if(activeSourceIdx == -1 || activeDestIdx == -1)
+	    {
+	       printf("\nError: Please select active endpoints (Option 4) first.\n");
+	       break;
+	    }
+	    if(strlen(data) == 0)
+	    {
+	       printf("\nError: Simulation data buffer is empty.\n");
+	       break;
+	    }
+	    if(packetSize <= 0 || frameSize <= 0)
+	    {
+	       printf("\nError: Invalid bit configuration rules.\n");
+	       break;
+	    }
+	    applicationLayer();
+	    transportLayer();
+	    networkLayer();
+	    dataLinkLayer();
+	    physicalLayer();
+	    break;
+	 case 8:
+	    exit(0);
+	 default:
+	    printf("\nInvalid choice. Please select 1-8.\n");
+      }
+   }
+   return 0;
+}
