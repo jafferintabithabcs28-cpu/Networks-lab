@@ -1,0 +1,203 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/select.h>
+#include <time.h>
+#define WINDOW_SIZE 4
+#define MAX_FRAMES 50
+#define TIMEOUT 5
+
+int checksum(char *data) {
+    int sum = 0;
+    int i;
+    for (i = 0; data[i] != '\0'; i++) {
+        sum += (unsigned char)data[i];
+    }
+    return sum % 256;
+}
+
+int main(int argc, char *argv[]) {
+    int sockfd;
+    int port;
+    int total_frames;
+    struct sockaddr_in receiver;
+    socklen_t receiver_len;
+    
+    char data[MAX_FRAMES][500];
+    char frame[1024];
+    char response[100];
+    
+    int acked[MAX_FRAMES];
+    int sent[MAX_FRAMES];
+    time_t timer[MAX_FRAMES];
+    
+    int base;
+    int next_frame;
+    int i;
+    
+    int target_error_frame;
+    int target_error_type;
+
+    if (argc != 3) {
+        printf("Usage: %s <receiver_ip> <port>\n", argv[0]);
+        return 1;
+    }
+
+    target_error_frame = -1;
+    target_error_type = -1;
+
+    for (i = 0; i < MAX_FRAMES; i++) {
+        acked[i] = 0;
+        sent[i] = 0;
+    }
+
+    port = atoi(argv[2]);
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        return 1;
+    }
+
+    receiver_len = sizeof(receiver);
+    receiver.sin_family = AF_INET;
+    receiver.sin_port = htons(port);
+    inet_pton(AF_INET, argv[1], &receiver.sin_addr);
+
+    printf("\n====================================\n");
+    printf("        SELECTIVE REPEAT ARQ\n");
+    printf("            BURST SENDER\n");
+    printf("====================================\n");
+    printf("Receiver IP : %s\n", argv[1]);
+    printf("Port        : %d\n", port);
+    printf("Window Size : %d\n", WINDOW_SIZE);
+    printf("Timer       : %d seconds\n", TIMEOUT);
+    printf("====================================\n\n");
+
+    printf("Enter total number of frames to send (max %d): ", WINDOW_SIZE);
+    if (scanf("%d", &total_frames) != 1) return 1;
+    getchar();
+
+    for (i = 0; i < total_frames; i++) {
+        printf("Enter data for Frame %d: ", i);
+        if (!fgets(data[i], sizeof(data[i]), stdin)) break;
+        data[i][strcspn(data[i], "\n")] = '\0';
+    }
+
+    printf("\n--- Network Interference Injection Menu ---\n");
+    printf("Which frame sequence (0-%d) do you want to damage? ", total_frames - 1);
+    if (scanf("%d", &target_error_frame) != 1) target_error_frame = -1;
+    printf("Choose error type (1 = Corrupt Checksum [NAK], 2 = Drop Frame [Timeout]): ");
+    if (scanf("%d", &target_error_type) != 1) target_error_type = -1;
+    getchar();
+
+    base = 0;
+    next_frame = 0;
+
+    printf("\nBursting window packets onto network link...\n\n");
+
+    while (base < total_frames) {
+        /* BURST SEND STAGE: Send out everything permitted by the window constraints at once */
+        while (next_frame < total_frames && next_frame < base + WINDOW_SIZE) {
+            int seq_no = next_frame % 8;
+            int cs = checksum(data[next_frame]);
+
+            if (next_frame == target_error_frame && sent[next_frame] == 0) {
+                if (target_error_type == 1) {
+                    printf("[BURST INJECTION] Sending Corrupted Frame %d...\n", seq_no);
+                    cs = (cs + 15) % 256; 
+                    sprintf(frame, "%d:%s:%d", seq_no, data[next_frame], cs);
+                    sendto(sockfd, frame, strlen(frame), 0, (struct sockaddr *)&receiver, receiver_len);
+                } else if (target_error_type == 2) {
+                    printf("[BURST INJECTION] Dropping Frame %d completely from link burst!\n", seq_no);
+                }
+            } else {
+                printf("Sending Frame %d... Sent.\n", seq_no);
+                sprintf(frame, "%d:%s:%d", seq_no, data[next_frame], cs);
+                sendto(sockfd, frame, strlen(frame), 0, (struct sockaddr *)&receiver, receiver_len);
+            }
+
+            sent[next_frame] = 1;
+            timer[next_frame] = time(NULL);
+            next_frame++;
+        }
+
+        /* READ NETWORK BOUND RESPONSES */
+        {
+            fd_set readfds;
+            struct timeval tv;
+            int result;
+
+            FD_ZERO(&readfds);
+            FD_SET(sockfd, &readfds); 
+            tv.tv_sec = 1;
+            tv.tv_usec = 0;
+
+            result = select(sockfd + 1, &readfds, NULL, NULL, &tv);
+
+            if (result > 0 && FD_ISSET(sockfd, &readfds)) {
+                int ack_no;
+                memset(response, 0, sizeof(response));
+                recvfrom(sockfd, response, sizeof(response) - 1, 0, (struct sockaddr *)&receiver, &receiver_len);
+                
+                if (sscanf(response, "%*[^:]:%d", &ack_no) == 1) {
+                    if (strncmp(response, "ACK:", 4) == 0) {
+                        int frame_no = (ack_no + 7) % 8; 
+                        printf("Received ACK %d (Acknowledges Sequence %d)\n", ack_no, frame_no);
+                        
+                        for (i = base; i < next_frame; i++) {
+                            if ((i % 8) == frame_no) {
+                                acked[i] = 1;
+                                break;
+                            }
+                        }
+                        
+                        while (base < total_frames && acked[base]) {
+                            printf("-> Frame Index %d (Seq %d) marked complete.\n", base, base % 8);
+                            base++;
+                        }
+                    } 
+                    else if (strncmp(response, "NAK:", 4) == 0) {
+                        printf("\nReceived NAK %d -> [SELECTIVE ACTION] Resending ONLY 
+			the error frame immediately...\n", ack_no);
+                        for (i = base; i < next_frame; i++) {
+                            if ((i % 8) == ack_no) {
+                                int cs = checksum(data[i]); 
+                                sprintf(frame, "%d:%s:%d", ack_no, data[i], cs);
+                                sendto(sockfd, frame, strlen(frame), 0, (struct sockaddr *)&receiver, receiver_len);
+                                timer[i] = time(NULL);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* BACKGROUND AUTOMATIC TIMEOUT EVALUATION */
+        {
+            time_t current_time = time(NULL);
+            for (i = base; i < next_frame; i++) {
+                if (sent[i] && !acked[i]) {
+                    if (difftime(current_time, timer[i]) >= TIMEOUT) {
+                        int seq_no = i % 8;
+                        int cs = checksum(data[i]);
+                        printf("\n--> AUTOMATIC TIMEOUT for Frame %d! [SELECTIVE ACTION] 
+			Resending ONLY this lost frame...\n", seq_no);
+                        sprintf(frame, "%d:%s:%d", seq_no, data[i], cs);
+                        sendto(sockfd, frame, strlen(frame), 0, (struct sockaddr *)&receiver, receiver_len);
+                        timer[i] = time(NULL);
+                    }
+                }
+            }
+        }
+    }
+
+    printf("\n====================================\n");
+    printf("All frames transmitted successfully.\n");
+    printf("====================================\n");
+    sendto(sockfd, "END", strlen("END"), 0, (struct sockaddr *)&receiver, receiver_len);
+    close(sockfd);
+    return 0;
+}
