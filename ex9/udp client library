@@ -1,0 +1,106 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8085
+#define SERVER_IP "127.0.0.1"
+
+struct Packet {
+    int seq_num;
+    int choice;
+    int book_id;
+    char text[50];
+};
+
+struct AckPacket {
+    int seq_num;
+    int status;
+};
+
+int main() {
+    int sockfd;
+    struct sockaddr_in server_addr;
+    socklen_t addr_len = sizeof(server_addr);
+    struct Packet pkt;
+    struct AckPacket ack;
+    int sequence = 0;
+    
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
+    
+    struct timeval tv;
+    tv.tv_sec = 2;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    
+    while (1) {
+        printf("\n--- UDP Library Menu ---\n");
+        printf("1. Search Book\n");
+        printf("2. Issue Book\n");
+        printf("3. Return Book\n");
+        printf("4. View Available Books\n");
+        printf("5. Exit\n");
+        printf("Enter option: ");
+        scanf("%d", &pkt.choice);
+        
+        if (pkt.choice == 5) break;
+        
+        if (pkt.choice >= 1 && pkt.choice <= 3) {
+            printf("Enter Book ID: ");
+            scanf("%d", &pkt.book_id);
+        }
+        
+        pkt.seq_num = ++sequence;
+        int attempts = 0;
+        int received = 0;
+        
+        while (attempts < 3 && !received) {
+            sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, addr_len);
+            
+            if (pkt.choice == 1) {
+                char buffer[100];
+                int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&server_addr, &addr_len);
+                if (n > 0) {
+                    printf("[Server Response]: %s\n", buffer);
+                    received = 1;
+                }
+            }
+            else if (pkt.choice == 2 || pkt.choice == 3) {
+                int n = recvfrom(sockfd, &ack, sizeof(ack), 0, (struct sockaddr*)&server_addr, &addr_len);
+                if (n > 0 && ack.seq_num == pkt.seq_num) {
+                    if (ack.status == 1) {
+                        printf("[Server Response]: Transaction Successful.\n");
+                    } else {
+                        printf("[Server Response]: Transaction Failed.\n");
+                    }
+                    received = 1;
+                }
+            }
+            else if (pkt.choice == 4) {
+                char buffer[2000];
+                int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&server_addr, &addr_len);
+                if (n > 0) {
+                    printf("\n--- Book Catalogue ---\n%s", buffer);
+                    received = 1;
+                }
+            }
+            
+            if (!received) {
+                printf("[Timeout] Retransmitting request packet...\n");
+                attempts++;
+            }
+        }
+        
+        if (!received) {
+            printf("[Error] Server is down. Failed to receive ACK.\n");
+        }
+    }
+    
+    close(sockfd);
+    return 0;
+}
