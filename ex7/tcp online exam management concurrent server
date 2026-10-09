@@ -1,0 +1,139 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+
+#define PORT 8091
+#define MAX_Q 3
+
+struct Question {
+    char text[100];
+    char options[4][50];
+    int correct_opt;
+};
+
+struct Question exam_db[MAX_Q] = {
+    {"What is the size of int in C?", {"1 byte", "2 bytes", "4 bytes", "8 bytes"}, 2},
+    {"Which protocol is reliable?", {"TCP", "UDP", "IP", "DNS"}, 0},
+    {"Loopback IP address is?", {"192.168.1.1", "127.0.0.1", "10.0.0.1", "0.0.0.0"}, 1}
+};
+
+pthread_mutex_t db_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void log_activity(const char *user, const char *msg) {
+    time_t t = time(NULL);
+    struct tm *tm_info = localtime(&t);
+    char t_str[26];
+    strftime(t_str, 26, "%Y-%m-%d %H:%M:%S", tm_info);
+    pthread_mutex_lock(&db_mutex);
+    printf("[%s] User: %s -> %s\n", t_str, user, msg);
+    pthread_mutex_unlock(&db_mutex);
+}
+
+void *client_handler(void *arg) {
+    int client_sock = *(int*)arg;
+    free(arg);
+    
+    char username[50];
+    char password[50];
+    int auth_status = 0;
+    
+    if (recv(client_sock, username, sizeof(username), 0) <= 0) {
+        close(client_sock);
+        return NULL;
+    }
+    if (recv(client_sock, password, sizeof(password), 0) <= 0) {
+        close(client_sock);
+        return NULL;
+    }
+    
+    if (strcmp(username, "student1") == 0 && strcmp(password, "pass123") == 0) {
+        auth_status = 1;
+    }
+    
+    send(client_sock, &auth_status, sizeof(auth_status), 0);
+    
+    if (!auth_status) {
+        close(client_sock);
+        return NULL;
+    }
+    
+    log_activity(username, "Authenticated successfully.");
+    
+    int choice;
+    int score = 0;
+    int exam_taken = 0;
+    
+    while (recv(client_sock, &choice, sizeof(choice), 0) > 0) {
+        if (choice == 1) {
+            log_activity(username, "Requested examination questions.");
+            pthread_mutex_lock(&db_mutex);
+            send(client_sock, exam_db, sizeof(exam_db), 0);
+            pthread_mutex_unlock(&db_mutex);
+        }
+        else if (choice == 2) {
+            int answers[MAX_Q];
+            recv(client_sock, answers, sizeof(answers), 0);
+            log_activity(username, "Submitted answers.");
+            
+            score = 0;
+            pthread_mutex_lock(&db_mutex);
+            for (int i = 0; i < MAX_Q; i++) {
+                if (answers[i] == exam_db[i].correct_opt) {
+                    score++;
+                }
+            }
+            pthread_mutex_unlock(&db_mutex);
+            exam_taken = 1;
+            send(client_sock, &score, sizeof(score), 0);
+        }
+        else if (choice == 3) {
+            log_activity(username, "Requested final score view.");
+            if (exam_taken) {
+                send(client_sock, &score, sizeof(score), 0);
+            } else {
+                int no_score = -1;
+                send(client_sock, &no_score, sizeof(no_score), 0);
+            }
+        }
+        else if (choice == 4) {
+            log_activity(username, "Disconnected gracefully.");
+            break;
+        }
+    }
+    
+    close(client_sock);
+    return NULL;
+}
+
+int main() {
+    int server_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_size = sizeof(client_addr);
+    
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    
+    bind(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    listen(server_sock, 10);
+    
+    printf("Concurrent Exam Server listening on port %d...\n", PORT);
+    
+    while (1) {
+        int client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &addr_size);
+        int *new_sock = malloc(sizeof(int));
+        *new_sock = client_sock;
+        
+        pthread_t tid;
+        pthread_create(&tid, NULL, client_handler, new_sock);
+        pthread_detach(tid);
+    }
+    
+    close(server_sock);
+    return 0;
+}
