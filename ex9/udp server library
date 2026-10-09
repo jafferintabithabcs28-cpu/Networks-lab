@@ -1,0 +1,186 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
+#include <arpa/inet.h>
+
+#define PORT 8085
+#define DB_FILE "library_db.txt"
+#define LOG_FILE "library_log.txt"
+
+struct Book {
+    int id;
+    char title[50];
+    int available;
+};
+
+struct Packet {
+    int seq_num;
+    int choice;
+    int book_id;
+    char text[50];
+};
+
+struct AckPacket {
+    int seq_num;
+    int status;
+};
+
+int last_processed_seq = -1;
+
+void log_activity(const char *msg) {
+    time_t t = time(NULL);
+    struct tm *tm_info = localtime(&t);
+    char t_str[26];
+    strftime(t_str, 26, "%Y-%m-%d %H:%M:%S", tm_info);
+    
+    FILE *fp = fopen(LOG_FILE, "a");
+    if (fp) {
+        fprintf(fp, "[%s] %s\n", t_str, msg);
+        fclose(fp);
+    }
+    printf("[%s] %s\n", t_str, msg);
+}
+
+void initialize_db() {
+    FILE *fp = fopen(DB_FILE, "w");
+    if (fp) {
+        fprintf(fp, "101 C_Programming 1\n");
+        fprintf(fp, "102 Data_Structures 1\n");
+        fprintf(fp, "103 Networks 1\n");
+        fclose(fp);
+    }
+}
+
+int handle_search(int id, char *res) {
+    FILE *fp = fopen(DB_FILE, "r");
+    struct Book b;
+    if (!fp) return 0;
+    while (fscanf(fp, "%d %s %d", &b.id, b.title, &b.available) != EOF) {
+        if (b.id == id) {
+            snprintf(res, 100, "Found: %s (Status: %s)", b.title, b.available ? "Available" : "Issued");
+            fclose(fp);
+            return 1;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+int handle_issue(int id) {
+    FILE *fp = fopen(DB_FILE, "r");
+    FILE *temp = fopen("temp.txt", "w");
+    struct Book b;
+    int success = 0;
+    if (!fp || !temp) return 0;
+    while (fscanf(fp, "%d %s %d", &b.id, b.title, &b.available) != EOF) {
+        if (b.id == id && b.available == 1) {
+            b.available = 0;
+            success = 1;
+        }
+        fprintf(temp, "%d %s %d\n", b.id, b.title, b.available);
+    }
+    fclose(fp);
+    fclose(temp);
+    rename("temp.txt", DB_FILE);
+    return success;
+}
+
+int handle_return(int id) {
+    FILE *fp = fopen(DB_FILE, "r");
+    FILE *temp = fopen("temp.txt", "w");
+    struct Book b;
+    int success = 0;
+    if (!fp || !temp) return 0;
+    while (fscanf(fp, "%d %s %d", &b.id, b.title, &b.available) != EOF) {
+        if (b.id == id && b.available == 0) {
+            b.available = 1;
+            success = 1;
+        }
+        fprintf(temp, "%d %s %d\n", b.id, b.title, b.available);
+    }
+    fclose(fp);
+    fclose(temp);
+    rename("temp.txt", DB_FILE);
+    return success;
+}
+
+void handle_list(char *res) {
+    FILE *fp = fopen(DB_FILE, "r");
+    struct Book b;
+    char line[100];
+    res[0] = '\0';
+    if (!fp) return;
+    while (fscanf(fp, "%d %s %d", &b.id, b.title, &b.available) != EOF) {
+        snprintf(line, sizeof(line), "ID:%d | %s | [%s]\n", b.id, b.title, b.available ? "AVBL" : "ISSUED");
+        strcat(res, line);
+    }
+    fclose(fp);
+}
+
+int main() {
+    int sockfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    struct Packet pkt;
+    struct AckPacket ack;
+    
+    initialize_db();
+    
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+    
+    bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    printf("Reliable UDP Library Server listening on port %d...\n", PORT);
+    
+    while (1) {
+        recvfrom(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr*)&client_addr, &addr_len);
+        
+        ack.seq_num = pkt.seq_num;
+        ack.status = 0;
+        
+        if (pkt.seq_num <= last_processed_seq) {
+            log_activity("Detected duplicate request. Resending ACK.");
+            sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr*)&client_addr, addr_len);
+            continue;
+        }
+        
+        last_processed_seq = pkt.seq_num;
+        char log_msg[100];
+        
+        if (pkt.choice == 1) {
+            char search_res[100] = "Book not found.";
+            handle_search(pkt.book_id, search_res);
+            snprintf(log_msg, sizeof(log_msg), "Search Request ID %d: %s", pkt.book_id, search_res);
+            log_activity(log_msg);
+            sendto(sockfd, search_res, sizeof(search_res), 0, (struct sockaddr*)&client_addr, addr_len);
+        }
+        else if (pkt.choice == 2) {
+            int ok = handle_issue(pkt.book_id);
+            ack.status = ok;
+            snprintf(log_msg, sizeof(log_msg), "Issue Request ID %d: %s", pkt.book_id, ok ? "SUCCESS" : "FAILED");
+            log_activity(log_msg);
+            sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr*)&client_addr, addr_len);
+        }
+        else if (pkt.choice == 3) {
+            int ok = handle_return(pkt.book_id);
+            ack.status = ok;
+            snprintf(log_msg, sizeof(log_msg), "Return Request ID %d: %s", pkt.book_id, ok ? "SUCCESS" : "FAILED");
+            log_activity(log_msg);
+            sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr*)&client_addr, addr_len);
+        }
+        else if (pkt.choice == 4) {
+            char list_res[2000];
+            handle_list(list_res);
+            log_activity("List Books Requested.");
+            sendto(sockfd, list_res, sizeof(list_res), 0, (struct sockaddr*)&client_addr, addr_len);
+        }
+    }
+    
+    close(sockfd);
+    return 0;
+}
