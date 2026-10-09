@@ -1,0 +1,24 @@
+import matplotlib.pyplot as plt
+
+time = []
+cwnd = []
+
+with open("cwnd.dat", "r") as file:
+    for line in file:
+        values = line.split()
+
+        if len(values) >= 2:
+            time.append(float(values[0]))
+            cwnd.append(float(values[1]))
+
+plt.plot(time, cwnd)
+
+plt.xlabel("Time (seconds)")
+plt.ylabel("Congestion Window (packets)")
+plt.title("TCP Congestion Window vs Time")
+
+plt.grid(True)
+
+plt.savefig("cwnd.png")
+
+plt.show()
