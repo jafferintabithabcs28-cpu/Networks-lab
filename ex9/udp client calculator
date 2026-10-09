@@ -1,0 +1,62 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8087
+#define SERVER_IP "127.0.0.1"
+
+struct CalcRequest {
+    double num1;
+    double num2;
+    char op;
+};
+
+struct CalcResponse {
+    double result;
+    int valid;
+    char error_msg[50];
+};
+
+int main() {
+    int sockfd;
+    struct sockaddr_in server_addr;
+    socklen_t addr_len = sizeof(server_addr);
+    struct CalcRequest req;
+    struct CalcResponse res;
+    int loop = 1;
+    
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
+    
+    while (loop) {
+        printf("\n--- UDP Arithmetic Operations Tool ---\n");
+        printf("Enter operand 1: ");
+        scanf("%lf", &req.num1);
+        printf("Enter math operator (+, -, *, /): ");
+        scanf(" %c", &req.op);
+        printf("Enter operand 2: ");
+        scanf("%lf", &req.num2);
+        
+        sendto(sockfd, &req, sizeof(req), 0, (struct sockaddr*)&server_addr, addr_len);
+        
+        recvfrom(sockfd, &res, sizeof(res), 0, (struct sockaddr*)&server_addr, &addr_len);
+        
+        if (res.valid) {
+            printf("[Result]: %.4f\n", res.result);
+        } else {
+            printf("[Server Validation Error]: %s\n", res.error_msg);
+        }
+        
+        printf("\nDo you want to process another computation? (1=Yes, 0=Exit): ");
+        scanf("%d", &loop);
+    }
+    
+    close(sockfd);
+    return 0;
+}
