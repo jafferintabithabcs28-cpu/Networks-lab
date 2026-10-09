@@ -1,0 +1,71 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+#define SERVER_IP "127.0.0.1"
+
+int main() {
+    int sockfd;
+    struct sockaddr_in server_addr;
+    socklen_t addr_len = sizeof(server_addr);
+    
+    int total_frames, window_size;
+    int base = 1, next_seq_num = 1;
+    int total_transmissions = 0;
+    
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
+    
+    struct timeval tv;
+    tv.tv_sec = 2;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    
+    printf("Enter total number of frames: ");
+    scanf("%d", &total_frames);
+    printf("Enter window size: ");
+    scanf("%d", &window_size);
+    
+    sendto(sockfd, &total_frames, sizeof(total_frames), 0, (struct sockaddr*)&server_addr, addr_len);
+    
+    while (base <= total_frames) {
+        while (next_seq_num < base + window_size && next_seq_num <= total_frames) {
+            printf("[Sender] Sending Frame %d\n", next_seq_num);
+            sendto(sockfd, &next_seq_num, sizeof(next_seq_num), 0, (struct sockaddr*)&server_addr, addr_len);
+            total_transmissions++;
+            next_seq_num++;
+        }
+        
+        int ack;
+        int recv_len = recvfrom(sockfd, &ack, sizeof(ack), 0, (struct sockaddr*)&server_addr, &addr_len);
+        
+        if (recv_len > 0) {
+            printf("[Sender] Received ACK %d\n", ack);
+            if (ack >= base) {
+                base = ack + 1;
+            }
+        } else {
+            printf("[Sender] TIMEOUT! Resending from Frame %d\n", base);
+            next_seq_num = base;
+        }
+    }
+    
+    printf("\n--- Analysis ---\n");
+    printf("Total Frames: %d\n", total_frames);
+    printf("Total Transmissions: %d\n", total_transmissions);
+    printf("Efficiency: %.2f%%\n", ((float)total_frames / total_transmissions) * 100);
+    
+    close(sockfd);
+    return 0;
+}
