@@ -1,0 +1,121 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8083
+
+struct Movie {
+    int id;
+    char title[20];
+    char time[10];
+    int seats;
+    int price;
+};
+
+struct Ticket {
+    int ticket_id;
+    int movie_id;
+    int seats_booked;
+    int active;
+};
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    int choice;
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        printf("Connection failed.\n");
+        return 1;
+    }
+
+    while (1) {
+        printf("\n--- Movie Booking Menu ---\n");
+        printf("1. View Movie List\n");
+        printf("2. Check Seat Availability\n");
+        printf("3. Book Tickets\n");
+        printf("4. Cancel Bookings\n");
+        printf("5. Display Booking Details\n");
+        printf("6. Exit\n");
+        printf("Enter choice: ");
+        scanf("%d", &choice);
+
+        send(sock, &choice, sizeof(choice), 0);
+
+        if (choice == 1) {
+            struct Movie m[2];
+            recv(sock, m, sizeof(m), 0);
+            printf("\nID\tTitle\t\tTiming\tAvailable Seats\tPrice\n");
+            for (int i = 0; i < 2; i++) {
+                printf("%d\t%s\t%s\t%d\t\t%d\n", m[i].id, m[i].title, m[i].time, m[i].seats, m[i].price);
+            }
+        }
+        else if (choice == 2) {
+            int movie_id, seats;
+            printf("Enter Movie ID: ");
+            scanf("%d", &movie_id);
+            send(sock, &movie_id, sizeof(movie_id), 0);
+            recv(sock, &seats, sizeof(seats), 0);
+            if (seats == -1) {
+                printf("Invalid Movie ID.\n");
+            } else {
+                printf("Available Seats: %d\n", seats);
+            }
+        }
+        else if (choice == 3) {
+            int movie_id, seats_req, ticket_id;
+            printf("Enter Movie ID: ");
+            scanf("%d", &movie_id);
+            printf("Enter number of tickets to book: ");
+            scanf("%d", &seats_req);
+            send(sock, &movie_id, sizeof(movie_id), 0);
+            send(sock, &seats_req, sizeof(seats_req), 0);
+            recv(sock, &ticket_id, sizeof(ticket_id), 0);
+            if (ticket_id == -1) {
+                printf("Booking failed! Not enough seats or invalid ID.\n");
+            } else {
+                printf("Booking successful! Ticket ID: %d\n", ticket_id);
+            }
+        }
+        else if (choice == 4) {
+            int ticket_id, success;
+            printf("Enter Ticket ID to cancel: ");
+            scanf("%d", &ticket_id);
+            send(sock, &ticket_id, sizeof(ticket_id), 0);
+            recv(sock, &success, sizeof(success), 0);
+            if (success == 1) {
+                printf("Cancellation successful.\n");
+            } else {
+                printf("Cancellation failed. Invalid Ticket ID or already cancelled.\n");
+            }
+        }
+        else if (choice == 5) {
+            int ticket_id;
+            struct Ticket t;
+            printf("Enter Ticket ID to view details: ");
+            scanf("%d", &ticket_id);
+            send(sock, &ticket_id, sizeof(ticket_id), 0);
+            recv(sock, &t, sizeof(t), 0);
+            if (t.ticket_id == -1) {
+                printf("Ticket ID not found.\n");
+            } else {
+                printf("\nTicket ID: %d\nMovie ID: %d\nSeats Booked: %d\nStatus: %s\n",
+                       t.ticket_id, t.movie_id, t.seats_booked, (t.active == 1) ? "ACTIVE" : "CANCELLED");
+            }
+        }
+        else if (choice == 6) {
+            printf("Exiting...\n");
+            break;
+        }
+    }
+
+    close(sock);
+    return 0;
+}
