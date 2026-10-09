@@ -1,0 +1,144 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <time.h>
+#include <arpa/inet.h>
+
+#define PORT 8081
+
+struct Train {
+    int id;
+    char name[20];
+    char route[30];
+    int seats;
+    int fare;
+};
+
+struct Booking {
+    int pnr;
+    int train_id;
+    int seats_booked;
+    int status; 
+};
+
+struct Train trains[2] = {
+    {101, "Express-A", "CityX-CityY", 50, 500},
+    {102, "Express-B", "CityY-CityZ", 30, 750}
+};
+
+struct Booking bookings[100];
+int booking_count = 0;
+int next_pnr = 1001;
+
+void log_activity(const char *msg) {
+    time_t t = time(NULL);
+    struct tm *tm_info = localtime(&t);
+    char buffer[26];
+    strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", tm_info);
+    printf("[%s] %s\n", buffer, msg);
+}
+
+void handle_client(int client_sock) {
+    int choice;
+    log_activity("Client connected.");
+    
+    while (recv(client_sock, &choice, sizeof(choice), 0) > 0) {
+        if (choice == 1) {
+            log_activity("Request: Search Trains");
+            send(client_sock, trains, sizeof(trains), 0);
+        } 
+        else if (choice == 2) {
+            int train_id, available_seats = -1;
+            recv(client_sock, &train_id, sizeof(train_id), 0);
+            log_activity("Request: Check Availability");
+            for (int i = 0; i < 2; i++) {
+                if (trains[i].id == train_id) {
+                    available_seats = trains[i].seats;
+                    break;
+                }
+            }
+            send(client_sock, &available_seats, sizeof(available_seats), 0);
+        } 
+        else if (choice == 3) {
+            int train_id, seats_req, response_pnr = -1;
+            recv(client_sock, &train_id, sizeof(train_id), 0);
+            recv(client_sock, &seats_req, sizeof(seats_req), 0);
+            log_activity("Request: Book Ticket");
+            for (int i = 0; i < 2; i++) {
+                if (trains[i].id == train_id && trains[i].seats >= seats_req && seats_req > 0) {
+                    trains[i].seats -= seats_req;
+                    response_pnr = next_pnr++;
+                    bookings[booking_count].pnr = response_pnr;
+                    bookings[booking_count].train_id = train_id;
+                    bookings[booking_count].seats_booked = seats_req;
+                    bookings[booking_count].status = 1;
+                    booking_count++;
+                    break;
+                }
+            }
+            send(client_sock, &response_pnr, sizeof(response_pnr), 0);
+        } 
+        else if (choice == 4) {
+            int pnr, success = 0;
+            recv(client_sock, &pnr, sizeof(pnr), 0);
+            log_activity("Request: Cancel Reservation");
+            for (int i = 0; i < booking_count; i++) {
+                if (bookings[i].pnr == pnr && bookings[i].status == 1) {
+                    bookings[i].status = 0;
+                    for (int j = 0; j < 2; j++) {
+                        if (trains[j].id == bookings[i].train_id) {
+                            trains[j].seats += bookings[i].seats_booked;
+                            break;
+                        }
+                    }
+                    success = 1;
+                    break;
+                }
+            }
+            send(client_sock, &success, sizeof(success), 0);
+        } 
+        else if (choice == 5) {
+            int pnr;
+            struct Booking found_booking = {-1, -1, -1, -1};
+            recv(client_sock, &pnr, sizeof(pnr), 0);
+            log_activity("Request: View Status");
+            for (int i = 0; i < booking_count; i++) {
+                if (bookings[i].pnr == pnr) {
+                    found_booking = bookings[i];
+                    break;
+                }
+            }
+            send(client_sock, &found_booking, sizeof(found_booking), 0);
+        } 
+        else if (choice == 6) {
+            log_activity("Client disconnected gracefully.");
+            break;
+        }
+    }
+    close(client_sock);
+}
+
+int main() {
+    int server_sock, client_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_size = sizeof(client_addr);
+
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    bind(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    listen(server_sock, 5);
+
+    printf("Iterative Railway Server listening on port %d...\n", PORT);
+
+    while (1) {
+        client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &addr_size);
+        handle_client(client_sock);
+    }
+
+    close(server_sock);
+    return 0;
+}
