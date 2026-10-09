@@ -1,0 +1,78 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+
+#define PORT 8093
+#define BUFFER_SIZE 1024
+
+void *client_handler(void *arg) {
+    int client_sock = *(int*)arg;
+    free(arg);
+    
+    int choice;
+    while (recv(client_sock, &choice, sizeof(choice), 0) > 0) {
+        if (choice == 1) {
+            char file_list[] = "sample1.txt\nsample2.txt\ndata.bin\n";
+            send(client_sock, file_list, sizeof(file_list), 0);
+        }
+        else if (choice == 2) {
+            char file_name[100];
+            recv(client_sock, file_name, sizeof(file_name), 0);
+            
+            FILE *fp = fopen(file_name, "r");
+            int file_exists = (fp != NULL);
+            send(client_sock, &file_exists, sizeof(file_exists), 0);
+            
+            if (file_exists) {
+                char buffer[BUFFER_SIZE];
+                int bytes_read;
+                while ((bytes_read = fread(buffer, 1, BUFFER_SIZE, fp)) > 0) {
+                    send(client_sock, buffer, bytes_read, 0);
+                }
+                fclose(fp);
+                
+                char end_marker[] = "EOF_DONE";
+                usleep(100000);
+                send(client_sock, end_marker, sizeof(end_marker), 0);
+            }
+        }
+        else if (choice == 3) {
+            break;
+        }
+    }
+    
+    close(client_sock);
+    return NULL;
+}
+
+int main() {
+    int server_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_size = sizeof(client_addr);
+    
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    
+    bind(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    listen(server_sock, 10);
+    
+    printf("Concurrent File Sharing Server listening on port %d...\n", PORT);
+    
+    while (1) {
+        int client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &addr_size);
+        int *new_sock = malloc(sizeof(int));
+        *new_sock = client_sock;
+        
+        pthread_t tid;
+        pthread_create(&tid, NULL, client_handler, new_sock);
+        pthread_detach(tid);
+    }
+    
+    close(server_sock);
+    return 0;
+}
