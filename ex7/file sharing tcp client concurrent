@@ -1,0 +1,80 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8093
+#define BUFFER_SIZE 1024
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    int choice;
+    
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        printf("Connection failed.\n");
+        return 1;
+    }
+    
+    while (1) {
+        printf("\n--- File Sharing Client Menu ---\n");
+        printf("1. Request Available Files List\n");
+        printf("2. Download a File\n");
+        printf("3. Exit\n");
+        printf("Enter selection: ");
+        scanf("%d", &choice);
+        
+        send(sock, &choice, sizeof(choice), 0);
+        
+        if (choice == 1) {
+            char buffer[BUFFER_SIZE] = {0};
+            recv(sock, buffer, sizeof(buffer), 0);
+            printf("\n--- Available Server Files ---\n%s", buffer);
+        }
+        else if (choice == 2) {
+            char file_name[100];
+            printf("Enter name of file to download: ");
+            scanf("%s", file_name);
+            send(sock, file_name, sizeof(file_name), 0);
+            
+            int file_exists;
+            recv(sock, &file_exists, sizeof(file_exists), 0);
+            
+            if (!file_exists) {
+                printf("Error: File does not exist on the server.\n");
+            } else {
+                char local_name[120];
+                snprintf(local_name, sizeof(local_name), "downloaded_%s", file_name);
+                FILE *fp = fopen(local_name, "w");
+                
+                char buffer[BUFFER_SIZE];
+                int bytes_received;
+                
+                while ((bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0)) > 0) {
+                    buffer[bytes_received] = '\0';
+                    if (strstr(buffer, "EOF_DONE") != NULL) {
+                        char *eof_pos = strstr(buffer, "EOF_DONE");
+                        fwrite(buffer, 1, eof_pos - buffer, fp);
+                        break;
+                    }
+                    fwrite(buffer, 1, bytes_received, fp);
+                }
+                fclose(fp);
+                printf("File downloaded successfully saved as: %s\n", local_name);
+            }
+        }
+        else if (choice == 3) {
+            printf("Exiting application.\n");
+            break;
+        }
+    }
+    
+    close(sock);
+    return 0;
+}
